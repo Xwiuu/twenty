@@ -27,19 +27,35 @@ Execução sempre explícita. Idempotente: rodar de novo não duplica nada.
 
 Não há imóveis, veículos, preços, placas ou anúncios como registros.
 
-## Como identificar os mocks
+## Como os mocks são identificados (manifesto)
 
-- Oportunidades, tarefas, notas e o nome dos contatos começam com `[DEMO] `.
-- E-mails: `demo-01@example.test` a `demo-10@example.test` (domínio reservado, nunca entrega).
-- A lista exata está em `scripts/jean-crm-demo.mjs` e é a única referência usada para idempotência e limpeza.
+Nome ou e-mail iguais **não** provam que um registro é da demo. A propriedade é definida por um **manifesto local de UUIDs**, gravado a cada criação:
+
+- Caminho padrão: `~/.jean-crm/demo-manifest.json` (fora do Git); troque com `JEAN_DEMO_MANIFEST=<caminho>`.
+- Guarda, por workspace, os UUIDs de contatos, oportunidades, tarefas e notas criados pelo script. Sem credenciais e sem dados pessoais reais.
+- Os registros também têm marcas visíveis: prefixo `[DEMO] ` e e-mails `demo-01..10@example.test`. A lista está em `scripts/jean-crm-demo.mjs`. Isso ajuda a olhar, mas não autoriza exclusão.
+
+Carga: se já existir um registro com identificador da demo que **não** esteja no manifesto, a carga aborta sem criar nada. Se a carga cair no meio, os UUIDs já criados ficam no manifesto e rodar de novo completa o resto sem duplicar.
+
+## Mocks criados antes do manifesto (adoção)
+
+Só se já houver mocks de uma versão anterior do script:
+
+```bash
+node scripts/jean-crm-demo.mjs --adopt            # dry-run: verifica e mostra quantos adotaria
+node scripts/jean-crm-demo.mjs --adopt --confirm  # grava no manifesto
+```
+
+A adoção exige correspondência única e exatamente as relações da demo (contato, tarefa e nota ligados à oportunidade certa). Se algo divergir, aborta sem gravar. Use apenas quando você sabe que aqueles registros vieram deste script.
 
 ## Remover com segurança
 
 ```bash
-JEAN_CRM_EMAIL=<email> JEAN_CRM_PASSWORD=<senha> node scripts/jean-crm-demo.mjs --clean
+node scripts/jean-crm-demo.mjs --clean            # dry-run: lista o que seria removido
+node scripts/jean-crm-demo.mjs --clean --confirm  # remove
 ```
 
-Remove apenas registros cujo nome/título/e-mail seja **exatamente** um da lista acima (nunca por padrão genérico, etapa ou interesse). Outros registros do workspace não são tocados.
+Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os UUIDs existentes e com o nome/e-mail esperado; relações exatamente as da demo (nenhuma tarefa/nota extra ligada às oportunidades da demo); nenhuma duplicidade. Se faltar manifesto ou houver qualquer divergência, **não remove nada**. A exclusão é sempre por UUID do manifesto. Ao final, o workspace sai do manifesto.
 
 ## Conferir na interface (manual)
 
@@ -52,8 +68,8 @@ Remove apenas registros cujo nome/título/e-mail seja **exatamente** um da lista
 
 ## Testes executados (v2.9.0, workspace de dev)
 
-- `node --test scripts/jean-crm-setup.test.mjs scripts/jean-crm-demo.test.mjs`: 19/19.
-- Carga, 2ª carga sem duplicar e `--clean` voltando exatamente à contagem anterior; carga refeita.
+- `node --test scripts/jean-crm-setup.test.mjs scripts/jean-crm-demo.test.mjs` (os testes de carga/adoção/limpeza usam um CRM e manifesto em memória, sem tocar no banco).
+- Ao vivo: adoção dos mocks existentes, carga idempotente, limpeza bloqueada sem manifesto, limpeza confirmada voltando exatamente à contagem anterior, recarga com manifesto.
 - `--verify`: Imóveis e Veículos mostram só o próprio interesse (5 de demo cada).
 - Dados preexistentes comparados com backup anterior (checksum por tabela): idênticos.
 - Smoke test da Sprint 01 (imóveis e veículos): passou.
