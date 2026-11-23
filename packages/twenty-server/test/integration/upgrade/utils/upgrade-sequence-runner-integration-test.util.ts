@@ -12,7 +12,6 @@ import {
   WorkspaceIteratorService,
 } from 'src/database/commands/command-runners/workspace-iterator.service';
 import { CoreEntityCacheService } from 'src/engine/core-entity-cache/services/core-entity-cache.service';
-import { ApplicationEntity } from 'src/engine/core-modules/application/application.entity';
 import { TwentyConfigService } from 'src/engine/core-modules/twenty-config/twenty-config.service';
 import { InstanceCommandRunnerService } from 'src/engine/core-modules/upgrade/services/instance-command-runner.service';
 import { UpgradeMigrationService } from 'src/engine/core-modules/upgrade/services/upgrade-migration.service';
@@ -94,19 +93,13 @@ export const seedEmptyWorkspaces = async (dataSource: DataSource) => {
         },
       });
 
-      await queryRunner.manager
-        .createQueryBuilder()
-        .insert()
-        .into(ApplicationEntity)
-        .values({
-          id: applicationId,
-          universalIdentifier: applicationId,
-          name: 'upgrade-test-fixture',
-          sourcePath: '',
-          workspaceId,
-        })
-        .orIgnore()
-        .execute();
+      // Raw SQL: the adapter is mocked here, so an entity insert would also name dropped columns
+      await queryRunner.query(
+        `INSERT INTO "core"."application" ("id", "universalIdentifier", "name", "sourcePath", "workspaceId")
+         VALUES ($1, $1, 'upgrade-test-fixture', '', $2)
+         ON CONFLICT DO NOTHING`,
+        [applicationId, workspaceId],
+      );
     }
 
     await queryRunner.commitTransaction();
