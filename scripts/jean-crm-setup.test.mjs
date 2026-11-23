@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { planNavigation, planStageUpdate } from './jean-crm-setup.mjs';
+import { main, planNavigation, planStageUpdate } from './jean-crm-setup.mjs';
 
 const option = (value, position) => ({ id: `id-${value}`, value, position });
 
@@ -138,4 +138,104 @@ test('navegação: itens pessoais de usuário não são tocados', () => {
   const personal = navItem('n-mine', 'o1', 0, { userWorkspaceId: 'user-1' });
   const plan = planNavigation([...defaultNavigation, personal], objectNameById);
   assert.ok(!plan.remove.includes('n-mine'));
+});
+
+test('navegação: item obrigatório ausente aborta e não planeja remoções', () => {
+  const withoutTask = defaultNavigation.filter((item) => item.id !== 'n-task');
+  const plan = planNavigation(withoutTask, objectNameById);
+  assert.match(plan.abort, /task \(0 encontrados\)/);
+  assert.equal(plan.remove, undefined);
+  assert.equal(plan.moves, undefined);
+});
+
+test('navegação: item obrigatório duplicado aborta', () => {
+  const duplicated = [...defaultNavigation, navItem('n-note-2', 'o5', 9)];
+  assert.match(
+    planNavigation(duplicated, objectNameById).abort,
+    /note \(2 encontrados\)/,
+  );
+});
+
+test('navegação: item obrigatório só dentro de pasta aborta', () => {
+  const inFolder = defaultNavigation.map((item) =>
+    item.id === 'n-note' ? { ...item, folderId: 'n-folder' } : item,
+  );
+  assert.match(
+    planNavigation(inFolder, objectNameById).abort,
+    /note \(0 encontrados\)/,
+  );
+});
+
+test('navegação: item obrigatório só pessoal (não de workspace) aborta', () => {
+  const personalOnly = defaultNavigation.map((item) =>
+    item.id === 'n-task' ? { ...item, userWorkspaceId: 'user-1' } : item,
+  );
+  assert.match(
+    planNavigation(personalOnly, objectNameById).abort,
+    /task \(0 encontrados\)/,
+  );
+});
+
+test('main: validação do menu falha antes de qualquer mutação de navegação', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.TWENTY_API_KEY;
+  process.env.TWENTY_API_KEY = 'chave-de-teste';
+  const jeanStage = [
+    'NEW',
+    'CONTACTED',
+    'QUALIFIED',
+    'NEGOTIATION',
+    'WON',
+    'LOST',
+  ].map(option);
+  const objects = [
+    {
+      id: 'opp',
+      nameSingular: 'opportunity',
+      fieldsList: [
+        { id: 'f-stage', name: 'stage', options: jeanStage },
+        { id: 'f-interest', name: 'interesse', options: [] },
+      ],
+    },
+    { id: 'o2', nameSingular: 'person', fieldsList: [] },
+    { id: 'o5', nameSingular: 'note', fieldsList: [] },
+    { id: 'o4', nameSingular: 'task', fieldsList: [] },
+  ];
+  // Menu sem Tarefas: a validação deve abortar.
+  const menu = [
+    navItem('n-person', 'o2', 0),
+    navItem('n-opportunity', 'opp', 1),
+    navItem('n-note', 'o5', 2),
+    navItem('n-other', 'o1', 3),
+  ];
+  globalThis.fetch = async (_url, init) => {
+    const { query } = JSON.parse(init.body);
+    calls.push(query);
+    let data = {};
+    if (query.includes('objects(paging')) {
+      data = { objects: { edges: objects.map((node) => ({ node })) } };
+    } else if (query.includes('currentWorkspace')) {
+      data = { currentWorkspace: { displayName: 'Jean CRM' } };
+    } else if (query.includes('navigationMenuItems{')) {
+      data = { navigationMenuItems: menu };
+    }
+    return { json: async () => ({ data }) };
+  };
+  try {
+    await assert.rejects(main(), /itens obrigatórios ausentes ou duplicados/);
+    assert.equal(
+      calls.filter((query) => /NavigationMenuItem\(/.test(query)).length,
+      0,
+      'nenhuma mutação de navegação deve ser enviada',
+    );
+    assert.equal(
+      calls.some((query) => query.includes('getViews')),
+      false,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.TWENTY_API_KEY;
+    else process.env.TWENTY_API_KEY = originalKey;
+  }
 });

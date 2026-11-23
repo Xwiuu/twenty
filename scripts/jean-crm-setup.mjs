@@ -138,15 +138,26 @@ export const planStageUpdate = (options) => {
 // Só mexe em itens de workspace (userWorkspaceId nulo); objetos e dados não são afetados.
 export const planNavigation = (items, objectNameById) => {
   const workspaceItems = items.filter((item) => !item.userWorkspaceId);
-  const kept = NAVIGATION_ORDER.map((name) =>
-    workspaceItems.find(
+  // Cada item obrigatório precisa existir exatamente uma vez, no nível do workspace,
+  // como OBJECT e fora de pasta. Senão aborta antes de planejar qualquer remoção.
+  const invalid = [];
+  const kept = NAVIGATION_ORDER.map((name) => {
+    const valid = workspaceItems.filter(
       (item) =>
         item.type === 'OBJECT' &&
         !item.folderId &&
         objectNameById[item.targetObjectMetadataId] === name,
-    ),
-  );
-  const keptIds = new Set(kept.filter(Boolean).map((item) => item.id));
+    );
+    if (valid.length !== 1)
+      invalid.push(`${name} (${valid.length} encontrados)`);
+    return valid[0];
+  });
+  if (invalid.length > 0) {
+    return {
+      abort: `navegação: itens obrigatórios ausentes ou duplicados: ${invalid.join(', ')}. Abortando sem alterar o menu.`,
+    };
+  }
+  const keptIds = new Set(kept.map((item) => item.id));
   // Itens dentro de pastas primeiro, para a pasta ser removida por último.
   const remove = workspaceItems
     .filter((item) => !keptIds.has(item.id))
@@ -154,12 +165,12 @@ export const planNavigation = (items, objectNameById) => {
     .map((item) => item.id);
   const moves = kept
     .map((item, position) => ({ item, position }))
-    .filter(({ item, position }) => item && item.position !== position)
+    .filter(({ item, position }) => item.position !== position)
     .map(({ item, position }) => ({ id: item.id, position }));
   return { remove, moves };
 };
 
-const main = async () => {
+export const main = async () => {
   const token = await getToken();
   const data = await request(
     '/metadata',
@@ -237,6 +248,7 @@ const main = async () => {
     `{navigationMenuItems{id type position folderId userWorkspaceId targetObjectMetadataId}}`,
   );
   const navigation = planNavigation(navigationMenuItems, objectNameById);
+  if (navigation.abort) throw new Error(navigation.abort);
   for (const id of navigation.remove) {
     await meta(`mutation($id:UUID!){deleteNavigationMenuItem(id:$id){id}}`, {
       id,

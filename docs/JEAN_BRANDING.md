@@ -20,6 +20,8 @@ O mesmo script da Sprint 01, idempotente (veja `docs/JEAN_CRM.md`):
 JEAN_CRM_EMAIL=<email> JEAN_CRM_PASSWORD=<senha> node scripts/jean-crm-setup.mjs
 ```
 
+Proteção: antes de remover qualquer item, o script exige Pessoas, Oportunidades, Tarefas e Notas exatamente uma vez, no nível do workspace, como item de objeto e fora de pasta. Se algum faltar, estiver duplicado ou só existir dentro de pasta, aborta sem alterar o menu.
+
 Reexecutar reaplica o contrato: o menu do workspace volta a ter só os 4 itens. Itens de menu de workspace adicionados à mão depois serão removidos na próxima execução (itens pessoais, não).
 
 Para desfazer no ambiente de dev: restaurar o backup (`pg_restore`) ou recriar os itens pela edição da barra lateral.
@@ -34,7 +36,7 @@ Para desfazer no ambiente de dev: restaurar o backup (`pg_restore`) ou recriar o
 
 ## Testes executados (v2.9.0, workspace de dev)
 
-- `node --test scripts/jean-crm-setup.test.mjs`: 10/10 (7 da Sprint 01 + 3 de navegação).
+- `node --test scripts/jean-crm-setup.test.mjs`: 15/15 (7 da Sprint 01 + 8 de navegação, incluindo aborto e prova de zero mutações).
 - Script rodado ao vivo; segunda execução sem alterações.
 - API: workspace "Jean CRM"; 4 itens de navegação na ordem esperada; views Imóveis/Veículos com filtro `IS` no campo Interesse e 7 colunas.
 - Regressão: smoke test da Sprint 01 passou (imóveis e veículos); 50 oportunidades, 1200 pessoas, 599 empresas, 29 objetos ativos preservados; sem erros nos logs.
