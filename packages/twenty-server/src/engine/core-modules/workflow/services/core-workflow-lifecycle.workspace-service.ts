@@ -27,7 +27,7 @@ import { getCoreWorkflowVersionEditLockKey } from 'src/engine/core-modules/workf
 import { CommandMenuItemService } from 'src/engine/metadata-modules/command-menu-item/command-menu-item.service';
 import { EngineComponentKey } from 'src/engine/metadata-modules/command-menu-item/enums/engine-component-key.enum';
 import { type FlatCommandMenuItem } from 'src/engine/metadata-modules/flat-command-menu-item/types/flat-command-menu-item.type';
-import { WorkflowCommonWorkspaceService } from 'src/modules/workflow/common/workspace-services/workflow-common.workspace-service';
+import { WorkflowMetadataReadService } from 'src/modules/workflow/common/workspace-services/workflow-metadata-read.workspace-service';
 import { WorkflowVersionValidationWorkspaceService } from 'src/modules/workflow/workflow-builder/workflow-validation/workflow-version-validation.workspace-service';
 import { type WorkflowAction } from 'src/modules/workflow/workflow-executor/workflow-actions/types/workflow-action.type';
 import {
@@ -64,7 +64,7 @@ export class CoreWorkflowLifecycleWorkspaceService {
     private readonly postgresAdvisoryLockService: PostgresAdvisoryLockService,
     private readonly coreWorkflowAccessService: CoreWorkflowAccessService,
     private readonly coreWorkflowTriggerService: CoreWorkflowTriggerService,
-    private readonly workflowCommonWorkspaceService: WorkflowCommonWorkspaceService,
+    private readonly workflowMetadataReadService: WorkflowMetadataReadService,
     private readonly workflowVersionValidationWorkspaceService: WorkflowVersionValidationWorkspaceService,
     private readonly commandMenuItemService: CommandMenuItemService,
     private readonly workspaceMigrationValidateBuildAndRunService: WorkspaceMigrationValidateBuildAndRunService,
@@ -147,7 +147,7 @@ export class CoreWorkflowLifecycleWorkspaceService {
     });
 
     const { objectIdByNameSingular, flatFieldMetadataMaps } =
-      await this.workflowCommonWorkspaceService.getFlatEntityMaps(workspaceId);
+      await this.workflowMetadataReadService.getFlatEntityMaps(workspaceId);
 
     assertPickRecordLoadBalanceConfigIsValid({
       steps: steps ?? [],
@@ -650,7 +650,7 @@ export class CoreWorkflowLifecycleWorkspaceService {
           availabilityType = CommandMenuItemAvailabilityType.RECORD_SELECTION;
 
           const { objectIdByNameSingular } =
-            await this.workflowCommonWorkspaceService.getFlatEntityMaps(
+            await this.workflowMetadataReadService.getFlatEntityMaps(
               workspaceId,
             );
 
