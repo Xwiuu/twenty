@@ -100,9 +100,9 @@ export class BackfillApplicationGrantRolesCommand extends ProvisionedWorkspaceCo
         flatRowLevelPermissionPredicateGroupMaps,
       };
 
-      const requestedFlatRole = isDefined(flatApplication.defaultRoleId)
+      const requestedFlatRole = isDefined(flatApplication.requestedRoleId)
         ? findFlatEntityByIdInFlatEntityMaps({
-            flatEntityId: flatApplication.defaultRoleId,
+            flatEntityId: flatApplication.requestedRoleId,
             flatEntityMaps: flatRoleMaps,
           })
         : undefined;
