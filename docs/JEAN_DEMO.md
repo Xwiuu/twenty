@@ -1,6 +1,8 @@
-# Jean CRM — demonstração (Sprint 02.2)
+# Jean CRM — demonstração (Sprint 02.2, empresas na 02.4)
 
 Um único workspace Twenty (`v2.9.0`) atende as duas operações: **Jean Imóveis** e **Jean Veículos**, separadas pelo campo `Interesse` das oportunidades e compartilhando o mesmo pipeline. Sem objetos, workspaces ou bancos novos.
+
+Na Sprint 02.4 cada operação ganhou uma **empresa demonstrativa** (registro nativo `Company`): `[DEMO] Jean Imóveis` e `[DEMO] Jean Veículos`. Servem só para organizar a experiência na tela; **não são pessoas jurídicas reais** nem uma estrutura multiempresa (sem CNPJ, telefone, site ou endereço). O vínculo real do negócio continua sendo o campo Interesse.
 
 ## Passo a passo
 
@@ -18,7 +20,7 @@ Execução sempre explícita. Idempotente: rodar de novo não duplica nada.
 
 ## O que é criado
 
-10 oportunidades fictícias, cada uma com 1 contato, 1 tarefa de acompanhamento, e 1 nota em duas delas:
+2 empresas, e 10 oportunidades fictícias, cada uma com 1 contato, 1 tarefa de acompanhamento, e 1 nota em duas delas. Os 5 contatos e as 5 oportunidades de cada interesse ficam vinculados à empresa correspondente (Company nativa existe tanto em Pessoas quanto em Oportunidades na v2.9.0, então não foi preciso relacionamento customizado):
 
 | Operação | Oportunidades (etapas) |
 |---|---|
@@ -32,10 +34,10 @@ Não há imóveis, veículos, preços, placas ou anúncios como registros.
 Nome ou e-mail iguais **não** provam que um registro é da demo. A propriedade é definida por um **manifesto local de UUIDs**, gravado a cada criação:
 
 - Caminho padrão: `~/.jean-crm/demo-manifest.json` (fora do Git); troque com `JEAN_DEMO_MANIFEST=<caminho>`.
-- Guarda, por workspace, os UUIDs de contatos, oportunidades, tarefas e notas criados pelo script. Sem credenciais e sem dados pessoais reais.
+- Guarda, por workspace, os UUIDs de empresas, contatos, oportunidades, tarefas e notas criados pelo script. Versão 2 (a versão 1, da Sprint 02.3, não tinha `companies`; é migrada ao ler, só acrescentando `companies: {}`, e uma versão desconhecida aborta sem alterar nada). Sem credenciais e sem dados pessoais reais.
 - Os registros também têm marcas visíveis: prefixo `[DEMO] ` e e-mails `demo-01..10@example.test`. A lista está em `scripts/jean-crm-demo.mjs`. Isso ajuda a olhar, mas não autoriza exclusão.
 
-Carga: se já existir um registro com identificador da demo que **não** esteja no manifesto, a carga aborta sem criar nada. Se a carga cair no meio, os UUIDs já criados ficam no manifesto e rodar de novo completa o resto sem duplicar.
+Carga: se já existir um registro (inclusive uma empresa com o mesmo nome) com identificador da demo que **não** esteja no manifesto, a carga aborta sem criar nada. Empresa nunca é reivindicada por nome. Ao vincular empresa a registros da demo já existentes (primeira vez, manifesto v1), o script verifica antes o conjunto inteiro e aborta se algo divergir; também aborta se um contato/oportunidade da demo já estiver ligado a uma empresa que não é da demo. Se a carga cair no meio, os UUIDs já criados ficam no manifesto e rodar de novo completa o resto sem duplicar.
 
 ## Mocks criados antes do manifesto (adoção)
 
@@ -46,7 +48,7 @@ node scripts/jean-crm-demo.mjs --adopt            # dry-run: verifica e mostra q
 node scripts/jean-crm-demo.mjs --adopt --confirm  # grava no manifesto
 ```
 
-A adoção exige correspondência única e exatamente as relações da demo (contato, tarefa e nota ligados à oportunidade certa). Se algo divergir, aborta sem gravar. Use apenas quando você sabe que aqueles registros vieram deste script.
+A adoção não adota empresas (só contatos, oportunidades, tarefas e notas). Exige correspondência única e exatamente as relações da demo (contato, tarefa e nota ligados à oportunidade certa). Se algo divergir, aborta sem gravar. Use apenas quando você sabe que aqueles registros vieram deste script.
 
 ## Remover com segurança
 
@@ -55,12 +57,12 @@ node scripts/jean-crm-demo.mjs --clean            # dry-run: lista o que seria r
 node scripts/jean-crm-demo.mjs --clean --confirm  # remove
 ```
 
-Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os UUIDs existentes e com o nome/e-mail esperado; relações exatamente as da demo (nenhuma tarefa/nota extra ligada às oportunidades da demo); nenhuma duplicidade. Se faltar manifesto, se algum UUID do manifesto não existir mais no CRM, ou houver qualquer outra divergência, **não remove nada** e o manifesto é preservado. (Se alguém apagou um mock à mão, rode a carga de novo para recriá-lo e depois a limpeza.) A exclusão é sempre por UUID do manifesto. Ao final, o workspace sai do manifesto.
+Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os UUIDs existentes e com o nome/e-mail esperado; relações exatamente as da demo (nenhuma tarefa/nota extra ligada às oportunidades da demo; cada contato/oportunidade na empresa certa; nenhum contato ou oportunidade de fora ligado às duas empresas); nenhuma duplicidade. Se faltar manifesto, se algum UUID do manifesto não existir mais no CRM, ou houver qualquer outra divergência, **não remove nada** e o manifesto é preservado. (Se alguém apagou um mock à mão, rode a carga de novo para recriá-lo e depois a limpeza.) A exclusão é sempre por UUID do manifesto (inclui as duas empresas do manifesto; empresas preexistentes não são tocadas). Ao final, o workspace sai do manifesto.
 
 ## Conferir na interface (manual)
 
 1. Entrar em http://localhost:3001 (login de dev do seed, veja `docs/JEAN_SETUP.md`). No topo deve aparecer **Jean CRM**.
-2. Menu lateral: só **People, Opportunities, Tasks, Notes**.
+2. Menu lateral: só **People, Companies, Opportunities, Tasks, Notes**. Em Companies, as duas `[DEMO]` (colunas Name, People, Opportunities); em People, os 10 contatos `[DEMO]` com a coluna Company preenchida (5 e 5).
 3. Opportunities → view **Imóveis**: 5 registros `[DEMO]` de imóveis, nenhum de veículos. View **Veículos**: o inverso. A coluna **Interesse** aparece nas duas.
 4. View **By Stage** (Kanban): as 10 demos nas colunas Novo, Contatado, Qualificado, Negociação, Ganho e Perdido (2/2/2/2/1/1).
 5. Abrir uma oportunidade: contato vinculado, aba Tasks com a tarefa de acompanhamento; nas duas com nota, aba Notes.
@@ -73,10 +75,10 @@ Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os 
 - `--verify`: Imóveis e Veículos mostram só o próprio interesse (5 de demo cada).
 - Dados preexistentes comparados com backup anterior (checksum por tabela): idênticos.
 - Smoke test da Sprint 01 (imóveis e veículos): passou.
-- **Validação visual: não realizada por esta automação** (navegador indisponível). Use a lista acima.
+- **Validação visual (Sprint 02.4, Chrome headless no ambiente local, login de dev do seed):** vistos na tela: título "Bem-vindo, Jean CRM." e nome no topo; menu de 5 itens na ordem; Companies com as duas `[DEMO]` e colunas Name/People/Opportunities (domínio e endereço vazios); People com Nome/E-mail/Telefone/Company e os 10 contatos na empresa certa; Opportunities com Nome/Interesse/Etapa/Contato/Empresa; seletor com All Opportunities, By Stage, Imóveis e Veículos; view Imóveis com 5 linhas e chip "Interesse: Imóveis"; Veículos com 5 e "Interesse: Veículos"; Kanban com as 6 etapas e os mocks 2/2/2/2/1/1 no topo de cada coluna. **Não vistos:** abas Tasks/Notes dentro de uma oportunidade, arrastar card no Kanban e criar/editar registro (use o roteiro acima).
 
 ## Pendências para produção
 
-- Validação visual obrigatória antes de entregar ao Jean.
+- Conferência manual do que a validação headless não cobriu (lista acima) antes de entregar ao Jean.
 - Dados de demonstração do Twenty (empresas, pessoas, 50 oportunidades) ainda existem no banco de dev; em produção usar workspace novo e **não** rodar `jean-crm-demo.mjs`.
 - Scripts validados só na `v2.9.0`.
