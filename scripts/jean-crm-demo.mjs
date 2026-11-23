@@ -106,6 +106,15 @@ export const DEMO_DEALS = [
 }));
 
 // Uma observação em cada operação, para mostrar Notas funcionando.
+// Duas empresas demonstrativas (registros nativos de Company), uma por operação.
+// Sem CNPJ, telefone, site, endereço ou qualquer dado legal.
+export const DEMO_COMPANIES = [
+  { interest: 'IMOVEIS', name: `${PREFIX}Jean Imóveis` },
+  { interest: 'VEICULOS', name: `${PREFIX}Jean Veículos` },
+];
+const companyNameFor = (interest) =>
+  DEMO_COMPANIES.find((company) => company.interest === interest).name;
+
 export const DEMO_NOTES = [
   {
     opportunity: DEMO_DEALS[2].opportunity,
@@ -121,7 +130,10 @@ export const DEMO_NOTES = [
 // Propriedade dos dados: só é "da demo" o que está no manifesto local (UUIDs).
 // Nome/e-mail iguais NÃO provam propriedade. O manifesto fica FORA do Git.
 // ---------------------------------------------------------------------------
+const MANIFEST_VERSION = 2;
+
 const emptyEntry = () => ({
+  companies: {},
   people: {},
   opportunities: {},
   tasks: {},
@@ -132,13 +144,32 @@ export const manifestPath = () =>
   process.env.JEAN_DEMO_MANIFEST ??
   join(homedir(), '.jean-crm', 'demo-manifest.json');
 
+// v1 (Sprint 02.3) não tinha empresas. A migração só acrescenta `companies: {}`; nada é removido
+// nem reescrito. Versão desconhecida aborta antes de qualquer mutação.
+export const migrateManifest = (manifest) => {
+  if (manifest.version === MANIFEST_VERSION) return manifest;
+  if (manifest.version !== 1) {
+    throw new Error(
+      `Manifesto com versão desconhecida (${manifest.version}); nada foi alterado.`,
+    );
+  }
+  const workspaces = Object.fromEntries(
+    Object.entries(manifest.workspaces).map(([id, entry]) => [
+      id,
+      { companies: {}, ...entry },
+    ]),
+  );
+  return { ...manifest, version: MANIFEST_VERSION, workspaces };
+};
+
 export const createFileStore = (path = manifestPath()) => ({
   path,
   load: async () => {
     try {
-      return JSON.parse(await readFile(path, 'utf8'));
+      return migrateManifest(JSON.parse(await readFile(path, 'utf8')));
     } catch (error) {
-      if (error.code === 'ENOENT') return { version: 1, workspaces: {} };
+      if (error.code === 'ENOENT')
+        return { version: MANIFEST_VERSION, workspaces: {} };
       throw new Error(`Manifesto ilegível (${path}): ${error.message}`);
     }
   },
@@ -160,6 +191,11 @@ const KINDS = [
   ],
   ['tasks', DEMO_DEALS.map((deal) => deal.task), 'listTasksByTitles'],
   ['notes', DEMO_NOTES.map((note) => note.title), 'listNotesByTitles'],
+  [
+    'companies',
+    DEMO_COMPANIES.map((company) => company.name),
+    'listCompaniesByNames',
+  ],
 ];
 
 const sameSet = (left, right) =>
@@ -179,9 +215,19 @@ const findUnmanaged = async (crm, entry) => {
 
 // Confere que cada id do manifesto ainda é exatamente o registro esperado, com as relações
 // esperadas. Devolve problemas e os ids existentes (ids já removidos são ignorados).
+// Empresa esperada para o contato/oportunidade: a do manifesto, ou nenhuma se ainda não foi criada.
+const expectedCompanyId = (entry, deal) =>
+  entry.companies[companyNameFor(deal.interest)] ?? null;
+
 const inspectOwned = async (crm, entry) => {
   const problems = [];
-  const existing = { notes: [], tasks: [], opportunities: [], people: [] };
+  const existing = {
+    notes: [],
+    tasks: [],
+    opportunities: [],
+    people: [],
+    companies: [],
+  };
 
   for (const deal of DEMO_DEALS) {
     const id = entry.people[deal.email];
@@ -195,6 +241,9 @@ const inspectOwned = async (crm, entry) => {
     }
     if (person.email !== deal.email || person.firstName !== deal.firstName) {
       problems.push(`pessoa ${id} diverge do esperado (${deal.email})`);
+    }
+    if (person.companyId !== expectedCompanyId(entry, deal)) {
+      problems.push(`pessoa ${id}: empresa diferente do esperado`);
     }
     existing.people.push(id);
   }
@@ -222,6 +271,9 @@ const inspectOwned = async (crm, entry) => {
       problems.push(
         `oportunidade ${id} diverge do esperado (${deal.opportunity})`,
       );
+    }
+    if (opportunity.companyId !== expectedCompanyId(entry, deal)) {
+      problems.push(`oportunidade ${id}: empresa diferente do esperado`);
     }
     if (opportunity.pointOfContactId !== entry.people[deal.email]) {
       problems.push(`oportunidade ${id}: contato diferente do esperado`);
@@ -279,6 +331,37 @@ const inspectOwned = async (crm, entry) => {
     existing.notes.push(id);
   }
 
+  for (const company of DEMO_COMPANIES) {
+    const id = entry.companies[company.name];
+    if (!id) continue;
+    const found = await crm.getCompany(id);
+    if (!found) {
+      problems.push(
+        `empresa ${id} (${company.name}) está no manifesto mas ausente no CRM`,
+      );
+      continue;
+    }
+    const deals = DEMO_DEALS.filter(
+      (deal) => deal.interest === company.interest,
+    );
+    const expectedPeople = deals
+      .map((deal) => entry.people[deal.email])
+      .filter(Boolean);
+    const expectedOpportunities = deals
+      .map((deal) => entry.opportunities[deal.opportunity])
+      .filter(Boolean);
+    if (
+      found.name !== company.name ||
+      !sameSet(found.personIds, expectedPeople) ||
+      !sameSet(found.opportunityIds, expectedOpportunities)
+    ) {
+      problems.push(
+        `empresa ${id} diverge do esperado (${company.name}): contatos/oportunidades vinculados diferentes`,
+      );
+    }
+    existing.companies.push(id);
+  }
+
   problems.push(
     ...(await findUnmanaged(crm, entry)).map(
       (item) => `duplicidade/conflito: ${item}`,
@@ -316,36 +399,96 @@ export const loadDemo = async (crm, store) => {
     );
   }
 
+  // Primeira vez que registros já existentes (manifesto v1) serão alterados para receber empresa:
+  // verifica o conjunto inteiro antes de qualquer mutação.
+  if (
+    Object.keys(entry.companies).length === 0 &&
+    Object.keys(entry.people).length > 0
+  ) {
+    const { problems } = await inspectOwned(crm, entry);
+    if (problems.length > 0) {
+      abortWith(
+        'Carga abortada: registros da demo existentes divergem do esperado. Nada foi alterado.',
+        problems,
+      );
+    }
+  }
+
+  // Antes de qualquer criação/alteração: contato ou oportunidade da demo já ligado a uma empresa
+  // que NÃO é nossa bloqueia a carga (não sobrescrevemos vínculo alheio).
+  const ownCompanyIds = Object.values(entry.companies);
+  for (const deal of DEMO_DEALS) {
+    for (const [label, id, getter] of [
+      ['contato', entry.people[deal.email], 'getPerson'],
+      ['oportunidade', entry.opportunities[deal.opportunity], 'getOpportunity'],
+    ]) {
+      const record = id ? await crm[getter](id) : null;
+      if (record?.companyId && !ownCompanyIds.includes(record.companyId)) {
+        abortWith(
+          'Carga abortada: registro da demo já vinculado a outra empresa. Nada foi alterado.',
+          [`${label} ${id} (${deal.email}) → empresa ${record.companyId}`],
+        );
+      }
+    }
+  }
+
   manifest.workspaces[workspaceId] = entry;
   const remember = async (kind, key, id) => {
     entry[kind][key] = id;
     entry.updatedAt = new Date().toISOString();
     await store.save(manifest); // grava a cada criação: uma falha no meio não perde ids
   };
-  const created = { people: 0, opportunities: 0, tasks: 0, notes: 0 };
+  const created = {
+    companies: 0,
+    people: 0,
+    opportunities: 0,
+    tasks: 0,
+    notes: 0,
+  };
+
+  for (const company of DEMO_COMPANIES) {
+    const id = entry.companies[company.name];
+    if (!(id && (await crm.getCompany(id)))) {
+      await remember(
+        'companies',
+        company.name,
+        await crm.createCompany(company.name),
+      );
+      created.companies += 1;
+    }
+  }
 
   for (const deal of DEMO_DEALS) {
-    if (
-      !(
-        entry.people[deal.email] &&
-        (await crm.getPerson(entry.people[deal.email]))
-      )
-    ) {
-      await remember('people', deal.email, await crm.createPerson(deal));
+    const companyId = expectedCompanyId(entry, deal);
+    const person =
+      entry.people[deal.email] &&
+      (await crm.getPerson(entry.people[deal.email]));
+    if (!person) {
+      await remember(
+        'people',
+        deal.email,
+        await crm.createPerson(deal, companyId),
+      );
       created.people += 1;
+    } else if (person.companyId !== companyId) {
+      await crm.setCompany('Person', entry.people[deal.email], companyId);
     }
-    if (
-      !(
-        entry.opportunities[deal.opportunity] &&
-        (await crm.getOpportunity(entry.opportunities[deal.opportunity]))
-      )
-    ) {
+    const opportunity =
+      entry.opportunities[deal.opportunity] &&
+      (await crm.getOpportunity(entry.opportunities[deal.opportunity]));
+    if (!opportunity) {
       await remember(
         'opportunities',
         deal.opportunity,
-        await crm.createOpportunity(deal, entry.people[deal.email]),
+        await crm.createOpportunity(deal, entry.people[deal.email], companyId),
       );
       created.opportunities += 1;
+    } else if (opportunity.companyId !== companyId) {
+      await crm.setCompany(
+        'Opportunity',
+        entry.opportunities[deal.opportunity],
+        companyId,
+      );
     }
     const opportunityId = entry.opportunities[deal.opportunity];
     let task =
@@ -388,7 +531,10 @@ export const adoptDemo = async (crm, store, { confirm }) => {
     throw new Error('Este workspace já tem manifesto; nada a adotar.');
   const entry = emptyEntry();
   const problems = [];
-  for (const [kind, identifiers, finder] of KINDS) {
+  // Empresas nunca são adotadas por nome: só existem no manifesto se esta carga as criou.
+  for (const [kind, identifiers, finder] of KINDS.filter(
+    ([kind]) => kind !== 'companies',
+  )) {
     const found = await crm[finder](identifiers);
     for (const node of found) {
       if (entry[kind][node.key])
@@ -434,6 +580,7 @@ export const cleanDemo = async (crm, store, { confirm }) => {
     Task: existing.tasks,
     Opportunity: existing.opportunities,
     Person: existing.people,
+    Company: existing.companies,
   };
   if (!confirm) return { removed: false, plan };
   for (const [type, ids] of Object.entries(plan)) {
@@ -512,10 +659,37 @@ export const createGraphqlCrm = async () => {
         .map((node) => ({ id: node.id, key: node.title }))
         .filter((node) => values.includes(node.key)),
 
+    listCompaniesByNames: async (values) =>
+      nodes(
+        await gql(
+          `query($v:[String]){companies(first:200,filter:{name:{in:$v}}){edges{node{id name}}}}`,
+          { v: values },
+        ),
+        'companies',
+      )
+        .map((node) => ({ id: node.id, key: node.name }))
+        .filter((node) => values.includes(node.key)),
+    getCompany: async (id) => {
+      const data = await orNull(
+        gql(
+          `query($id:UUID!){company(filter:{id:{eq:$id}}){id name people{edges{node{id}}} opportunities{edges{node{id}}}}}`,
+          { id },
+        ),
+      );
+      const node = data?.company;
+      return node
+        ? {
+            id,
+            name: node.name,
+            personIds: ids(node.people, 'id'),
+            opportunityIds: ids(node.opportunities, 'id'),
+          }
+        : null;
+    },
     getPerson: async (id) => {
       const data = await orNull(
         gql(
-          `query($id:UUID!){person(filter:{id:{eq:$id}}){id name{firstName} emails{primaryEmail}}}`,
+          `query($id:UUID!){person(filter:{id:{eq:$id}}){id companyId name{firstName} emails{primaryEmail}}}`,
           { id },
         ),
       );
@@ -525,13 +699,14 @@ export const createGraphqlCrm = async () => {
             id,
             firstName: node.name.firstName,
             email: node.emails.primaryEmail,
+            companyId: node.companyId ?? null,
           }
         : null;
     },
     getOpportunity: async (id) => {
       const data = await orNull(
         gql(
-          `query($id:UUID!){opportunity(filter:{id:{eq:$id}}){id name interesse pointOfContact{id} taskTargets{edges{node{taskId}}} noteTargets{edges{node{noteId}}}}}`,
+          `query($id:UUID!){opportunity(filter:{id:{eq:$id}}){id name interesse companyId pointOfContact{id} taskTargets{edges{node{taskId}}} noteTargets{edges{node{noteId}}}}}`,
           { id },
         ),
       );
@@ -541,6 +716,7 @@ export const createGraphqlCrm = async () => {
             id,
             name: node.name,
             interest: node.interesse,
+            companyId: node.companyId ?? null,
             pointOfContactId: node.pointOfContact?.id ?? null,
             taskIds: ids(node.taskTargets, 'taskId'),
             noteIds: ids(node.noteTargets, 'noteId'),
@@ -580,7 +756,19 @@ export const createGraphqlCrm = async () => {
         : null;
     },
 
-    createPerson: async (deal) =>
+    createCompany: async (name) =>
+      (
+        await gql(
+          `mutation($d:CompanyCreateInput!){createCompany(data:$d){id}}`,
+          { d: { name } },
+        )
+      ).createCompany.id,
+    setCompany: (type, id, companyId) =>
+      gql(
+        `mutation($id:UUID!,$d:${type}UpdateInput!){update${type}(id:$id,data:$d){id}}`,
+        { id, d: { companyId } },
+      ),
+    createPerson: async (deal, companyId) =>
       (
         await gql(
           `mutation($d:PersonCreateInput!){createPerson(data:$d){id}}`,
@@ -588,11 +776,12 @@ export const createGraphqlCrm = async () => {
             d: {
               name: { firstName: deal.firstName, lastName: deal.lastName },
               emails: { primaryEmail: deal.email },
+              companyId,
             },
           },
         )
       ).createPerson.id,
-    createOpportunity: async (deal, pointOfContactId) =>
+    createOpportunity: async (deal, pointOfContactId, companyId) =>
       (
         await gql(
           `mutation($d:OpportunityCreateInput!){createOpportunity(data:$d){id}}`,
@@ -600,6 +789,7 @@ export const createGraphqlCrm = async () => {
             d: {
               name: deal.opportunity,
               pointOfContactId,
+              companyId,
               interesse: deal.interest,
               stage: deal.stage,
             },
@@ -725,7 +915,7 @@ const run = async () => {
   } else {
     const created = await loadDemo(crm, store);
     console.log(
-      `demo: criados ${created.people} contatos, ${created.opportunities} oportunidades, ${created.tasks} tarefas, ${created.notes} notas.`,
+      `demo: criados ${created.companies} empresas, ${created.people} contatos, ${created.opportunities} oportunidades, ${created.tasks} tarefas, ${created.notes} notas.`,
     );
   }
 };

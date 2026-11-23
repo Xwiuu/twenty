@@ -2,7 +2,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { main, planNavigation, planStageUpdate } from './jean-crm-setup.mjs';
+import {
+  main,
+  planColumns,
+  planNavigation,
+  planStageUpdate,
+} from './jean-crm-setup.mjs';
 
 const option = (value, position) => ({ id: `id-${value}`, value, position });
 
@@ -104,33 +109,33 @@ const defaultNavigation = [
   navItem('n-workflow', 'o6', 0, { folderId: 'n-folder' }),
 ];
 
-test('navegação padrão: remove o que sobra (pasta por último) e reordena os 4 itens', () => {
+test('navegação padrão: remove o que sobra (pasta por último) e reordena os 5 itens', () => {
   const plan = planNavigation(defaultNavigation, objectNameById);
   assert.deepEqual(
     new Set(plan.remove),
-    new Set(['n-company', 'n-dashboard', 'n-folder', 'n-workflow']),
+    new Set(['n-dashboard', 'n-folder', 'n-workflow']),
   );
   assert.ok(
     plan.remove.indexOf('n-workflow') < plan.remove.indexOf('n-folder'),
   );
   assert.deepEqual(plan.moves, [
     { id: 'n-person', position: 0 },
-    { id: 'n-opportunity', position: 1 },
-    { id: 'n-task', position: 2 },
-    { id: 'n-note', position: 3 },
+    { id: 'n-company', position: 1 },
   ]);
 });
 
 test('navegação já simplificada: nada a fazer', () => {
   const simplified = [
     navItem('n-person', 'o2', 0),
-    navItem('n-opportunity', 'o3', 1),
-    navItem('n-task', 'o4', 2),
-    navItem('n-note', 'o5', 3),
+    navItem('n-company', 'o1', 1),
+    navItem('n-opportunity', 'o3', 2),
+    navItem('n-task', 'o4', 3),
+    navItem('n-note', 'o5', 4),
   ];
   assert.deepEqual(planNavigation(simplified, objectNameById), {
     remove: [],
     moves: [],
+    create: [],
   });
 });
 
@@ -238,4 +243,102 @@ test('main: validação do menu falha antes de qualquer mutação de navegação
     if (originalKey === undefined) delete process.env.TWENTY_API_KEY;
     else process.env.TWENTY_API_KEY = originalKey;
   }
+});
+
+test('navegação da Sprint 02 (4 itens, sem Empresas): planeja criar Empresas e reordenar', () => {
+  const sprint02 = [
+    navItem('n-person', 'o2', 0),
+    navItem('n-opportunity', 'o3', 1),
+    navItem('n-task', 'o4', 2),
+    navItem('n-note', 'o5', 3),
+  ];
+  assert.deepEqual(planNavigation(sprint02, objectNameById), {
+    remove: [],
+    moves: [
+      { id: 'n-opportunity', position: 2 },
+      { id: 'n-task', position: 3 },
+      { id: 'n-note', position: 4 },
+    ],
+    create: [{ name: 'company', position: 1 }],
+  });
+});
+
+test('navegação: Empresas só dentro de pasta ou duplicada ainda aborta', () => {
+  const inFolder = defaultNavigation.map((item) =>
+    item.id === 'n-company' ? { ...item, folderId: 'n-folder' } : item,
+  );
+  assert.ok(planNavigation(inFolder, objectNameById).abort);
+  const duplicated = [...defaultNavigation, navItem('n-company-2', 'o1', 9)];
+  assert.ok(planNavigation(duplicated, objectNameById).abort);
+});
+
+test('navegação: outro item obrigatório ausente continua abortando (sem criar nada)', () => {
+  const withoutTask = defaultNavigation.filter((item) => item.id !== 'n-task');
+  const plan = planNavigation(withoutTask, objectNameById);
+  assert.ok(plan.abort);
+  assert.equal(plan.create, undefined);
+  assert.equal(plan.remove, undefined);
+});
+
+// planColumns: mostra/ordena as colunas comerciais, oculta o resto (sem apagar) e cria o que falta.
+const columnFieldIds = {
+  name: 'f-name',
+  emails: 'f-emails',
+  phones: 'f-phones',
+  company: 'f-company',
+  city: 'f-city',
+};
+const viewField = (id, name, position, isVisible = true) => ({
+  id,
+  fieldMetadataId: columnFieldIds[name],
+  position,
+  isVisible,
+});
+
+test('colunas: oculta as irrelevantes, reordena e não cria o que já existe', () => {
+  const fields = [
+    viewField('v1', 'name', 0),
+    viewField('v2', 'city', 1),
+    viewField('v3', 'emails', 2),
+    viewField('v4', 'company', 3),
+    viewField('v5', 'phones', 4),
+  ];
+  const plan = planColumns(
+    fields,
+    ['name', 'emails', 'phones', 'company'],
+    columnFieldIds,
+  );
+  assert.deepEqual(plan.creates, []);
+  assert.deepEqual(
+    plan.updates.sort((a, b) => a.id.localeCompare(b.id)),
+    [
+      { id: 'v2', update: { isVisible: false, position: 1 } },
+      { id: 'v3', update: { isVisible: true, position: 1 } },
+      { id: 'v5', update: { isVisible: true, position: 2 } },
+    ],
+  );
+});
+
+test('colunas: cria a coluna desejada que não existe na view', () => {
+  const plan = planColumns(
+    [viewField('v1', 'name', 0)],
+    ['name', 'company'],
+    columnFieldIds,
+  );
+  assert.deepEqual(plan.updates, []);
+  assert.equal(plan.creates.length, 1);
+  assert.equal(plan.creates[0].fieldMetadataId, 'f-company');
+  assert.equal(plan.creates[0].position, 1);
+});
+
+test('colunas: já no layout desejado, nada a fazer (idempotente)', () => {
+  const fields = [
+    viewField('v1', 'name', 0),
+    viewField('v2', 'emails', 1),
+    viewField('v3', 'city', 5, false),
+  ];
+  assert.deepEqual(planColumns(fields, ['name', 'emails'], columnFieldIds), {
+    updates: [],
+    creates: [],
+  });
 });
