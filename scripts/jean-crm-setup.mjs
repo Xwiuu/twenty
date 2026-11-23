@@ -1,5 +1,7 @@
 // Configura o CRM do Jean pela API de metadata do Twenty. Idempotente: pode rodar várias vezes.
 // Uso: veja docs/JEAN_CRM.md. Credenciais só por variáveis de ambiente.
+import { pathToFileURL } from 'node:url';
+
 const API_URL = process.env.TWENTY_API_URL ?? 'http://localhost:3000';
 const ORIGIN = process.env.TWENTY_ORIGIN ?? 'http://localhost:3001';
 
@@ -88,6 +90,43 @@ const sameValues = (options, values) =>
     .sort((a, b) => a.position - b.position)
     .every((option, index) => option.value === values[index]);
 
+// Decide o que fazer com as opções atuais de `stage`, sem tocar na API.
+// Só migra se as opções forem exatamente as 5 padrão do Twenty (sem extras, faltas ou duplicadas).
+export const planStageUpdate = (options) => {
+  const current = options.map((option) => option.value);
+  const wanted = STAGES.map((item) => item.value);
+  if (sameValues(options, wanted)) return { action: 'skip' };
+
+  const legacy = STAGES.filter((item) => item.legacyValue).map(
+    (item) => item.legacyValue,
+  );
+  const isStock =
+    current.length === legacy.length &&
+    new Set(current).size === legacy.length &&
+    legacy.every((value) => current.includes(value));
+  if (!isStock) {
+    return {
+      action: 'abort',
+      reason: `stage tem opções inesperadas (${current.join(', ')}). Abortando para não sobrescrever.`,
+    };
+  }
+
+  // Preserva o id de cada opção existente para o Twenty migrar os dados.
+  const migrated = STAGES.map((item, position) => {
+    const existing = options.find(
+      (option) => option.value === item.legacyValue,
+    );
+    return {
+      ...(existing ? { id: existing.id } : {}),
+      value: item.value,
+      label: item.label,
+      color: item.color,
+      position,
+    };
+  });
+  return { action: 'update', options: migrated };
+};
+
 const main = async () => {
   const token = await getToken();
   const data = await request(
@@ -104,39 +143,21 @@ const main = async () => {
 
   // Pipeline: troca as opções de `stage`, preservando os ids para migrar os dados existentes.
   const stage = opportunity.fieldsList.find((field) => field.name === 'stage');
-  const wanted = STAGES.map((item) => item.value);
-  if (sameValues(stage.options, wanted)) {
+  const plan = planStageUpdate(stage.options);
+  if (plan.action === 'abort') throw new Error(plan.reason);
+  if (plan.action === 'skip') {
     console.log('stage: já configurado, nada a fazer.');
   } else {
-    const legacy = STAGES.filter((item) => item.legacyValue).map(
-      (item) => item.legacyValue,
-    );
-    const current = stage.options.map((option) => option.value);
-    const isStock = legacy.every((value) => current.includes(value));
-    if (!isStock) {
-      throw new Error(
-        `stage tem opções inesperadas (${current.join(', ')}). Abortando para não sobrescrever.`,
-      );
-    }
-    const options = STAGES.map((item, position) => {
-      const existing = stage.options.find(
-        (option) => option.value === item.legacyValue,
-      );
-      return {
-        ...(existing ? { id: existing.id } : {}),
-        value: item.value,
-        label: item.label,
-        color: item.color,
-        position,
-      };
-    });
     await request(
       '/metadata',
       `mutation($input:UpdateOneFieldMetadataInput!){updateOneField(input:$input){id}}`,
-      { input: { id: stage.id, update: { options } } },
+      { input: { id: stage.id, update: { options: plan.options } } },
       token,
     );
-    console.log('stage: atualizado para', wanted.join(' > '));
+    console.log(
+      'stage: atualizado para',
+      STAGES.map((item) => item.value).join(' > '),
+    );
   }
 
   // Interesse: campo select novo em Opportunity.
@@ -160,7 +181,9 @@ const main = async () => {
   }
 };
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exit(1);
-});
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exit(1);
+  });
+}

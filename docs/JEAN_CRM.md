@@ -55,7 +55,9 @@ JEAN_CRM_EMAIL=<email> JEAN_CRM_PASSWORD=<senha> node scripts/jean-crm-setup.mjs
 JEAN_CRM_EMAIL=<email> JEAN_CRM_PASSWORD=<senha> node scripts/jean-crm-smoke.mjs
 ```
 
-Cria contato, oportunidade com interesse Imóveis e depois Veículos, percorre as etapas até `WON`, cria tarefa vinculada, confere a persistência e remove só o que criou.
+Teste unitário da regra de migração do pipeline (sem banco, sem dependências): `node --test scripts/jean-crm-setup.test.mjs`.
+
+O smoke cria contato, oportunidade com interesse Imóveis e depois Veículos, percorre as etapas até `WON`, cria tarefa vinculada, confere a persistência e remove só o que criou.
 
 ## Limitações conhecidas
 
