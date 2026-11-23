@@ -66,3 +66,9 @@ O smoke cria contato, oportunidade com interesse Imóveis e depois Veículos, pe
 - Uma sincronização futura do Twenty com a definição padrão de `stage` pode sobrescrever as opções. Se acontecer, rode o script de novo.
 - Valores `NEW`..`LOST` ficam em inglês (rótulos em português). O valor padrão `NEW` foi mantido para não mexer no padrão do campo.
 - O smoke test valida por API. A conferência visual do Kanban não foi feita por esta automação.
+
+## Pendências antes da entrega ao Jean
+
+- **Validação visual** (login, Kanban com as 6 colunas, criar oportunidade com Interesse): não feita por automação; fazer manualmente.
+- **Migração real do pipeline** (caminho "atualizar"): só a decisão é testada por unidade (`jean-crm-setup.test.mjs`). O caminho ao vivo foi executado uma vez, antes da refatoração; reexecutar em um workspace com pipeline padrão (ex.: YCombinator do seed, após `pg_dump`).
+- **Compatibilidade com versões novas do Twenty:** scripts validados só na `v2.9.0`. Não assumir que funcionam no `main` do fork (6540 commits à frente) sem revalidar.
