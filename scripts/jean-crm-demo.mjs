@@ -187,7 +187,12 @@ const inspectOwned = async (crm, entry) => {
     const id = entry.people[deal.email];
     if (!id) continue;
     const person = await crm.getPerson(id);
-    if (!person) continue;
+    if (!person) {
+      problems.push(
+        `pessoa ${id} (${deal.email}) está no manifesto mas ausente no CRM`,
+      );
+      continue;
+    }
     if (person.email !== deal.email || person.firstName !== deal.firstName) {
       problems.push(`pessoa ${id} diverge do esperado (${deal.email})`);
     }
@@ -198,7 +203,12 @@ const inspectOwned = async (crm, entry) => {
     const id = entry.opportunities[deal.opportunity];
     if (!id) continue;
     const opportunity = await crm.getOpportunity(id);
-    if (!opportunity) continue;
+    if (!opportunity) {
+      problems.push(
+        `oportunidade ${id} (${deal.opportunity}) está no manifesto mas ausente no CRM`,
+      );
+      continue;
+    }
     const expectedTask = entry.tasks[deal.task];
     const expectedNotes = DEMO_NOTES.filter(
       (note) => note.opportunity === deal.opportunity,
@@ -233,7 +243,12 @@ const inspectOwned = async (crm, entry) => {
     const id = entry.tasks[deal.task];
     if (!id) continue;
     const task = await crm.getTask(id);
-    if (!task) continue;
+    if (!task) {
+      problems.push(
+        `tarefa ${id} (${deal.task}) está no manifesto mas ausente no CRM`,
+      );
+      continue;
+    }
     const opportunityId = entry.opportunities[deal.opportunity];
     if (
       task.title !== deal.task ||
@@ -248,7 +263,12 @@ const inspectOwned = async (crm, entry) => {
     const id = entry.notes[note.title];
     if (!id) continue;
     const found = await crm.getNote(id);
-    if (!found) continue;
+    if (!found) {
+      problems.push(
+        `nota ${id} (${note.title}) está no manifesto mas ausente no CRM`,
+      );
+      continue;
+    }
     const opportunityId = entry.opportunities[note.opportunity];
     if (
       found.title !== note.title ||
@@ -433,6 +453,16 @@ export const createGraphqlCrm = async () => {
     request('/graphql', query, variables, token);
   const meta = (query, variables) =>
     request('/metadata', query, variables, token);
+  // O Twenty responde RECORD_NOT_FOUND (erro) para UUID inexistente; aqui vira null.
+  // Qualquer outro erro continua propagando.
+  const orNull = async (promise) => {
+    try {
+      return await promise;
+    } catch (error) {
+      if (error.message.includes('RECORD_NOT_FOUND')) return null;
+      throw error;
+    }
+  };
   const nodes = (data, key) => data[key].edges.map((edge) => edge.node);
   const ids = (connection, field) =>
     connection.edges.map((edge) => edge.node[field]);
@@ -483,11 +513,13 @@ export const createGraphqlCrm = async () => {
         .filter((node) => values.includes(node.key)),
 
     getPerson: async (id) => {
-      const data = await gql(
-        `query($id:UUID!){person(filter:{id:{eq:$id}}){id name{firstName} emails{primaryEmail}}}`,
-        { id },
+      const data = await orNull(
+        gql(
+          `query($id:UUID!){person(filter:{id:{eq:$id}}){id name{firstName} emails{primaryEmail}}}`,
+          { id },
+        ),
       );
-      const node = data.person;
+      const node = data?.person;
       return node
         ? {
             id,
@@ -497,11 +529,13 @@ export const createGraphqlCrm = async () => {
         : null;
     },
     getOpportunity: async (id) => {
-      const data = await gql(
-        `query($id:UUID!){opportunity(filter:{id:{eq:$id}}){id name interesse pointOfContact{id} taskTargets{edges{node{taskId}}} noteTargets{edges{node{noteId}}}}}`,
-        { id },
+      const data = await orNull(
+        gql(
+          `query($id:UUID!){opportunity(filter:{id:{eq:$id}}){id name interesse pointOfContact{id} taskTargets{edges{node{taskId}}} noteTargets{edges{node{noteId}}}}}`,
+          { id },
+        ),
       );
-      const node = data.opportunity;
+      const node = data?.opportunity;
       return node
         ? {
             id,
@@ -514,11 +548,13 @@ export const createGraphqlCrm = async () => {
         : null;
     },
     getTask: async (id) => {
-      const data = await gql(
-        `query($id:UUID!){task(filter:{id:{eq:$id}}){id title taskTargets{edges{node{targetOpportunityId}}}}}`,
-        { id },
+      const data = await orNull(
+        gql(
+          `query($id:UUID!){task(filter:{id:{eq:$id}}){id title taskTargets{edges{node{targetOpportunityId}}}}}`,
+          { id },
+        ),
       );
-      const node = data.task;
+      const node = data?.task;
       return node
         ? {
             id,
@@ -528,11 +564,13 @@ export const createGraphqlCrm = async () => {
         : null;
     },
     getNote: async (id) => {
-      const data = await gql(
-        `query($id:UUID!){note(filter:{id:{eq:$id}}){id title noteTargets{edges{node{targetOpportunityId}}}}}`,
-        { id },
+      const data = await orNull(
+        gql(
+          `query($id:UUID!){note(filter:{id:{eq:$id}}){id title noteTargets{edges{node{targetOpportunityId}}}}}`,
+          { id },
+        ),
       );
-      const node = data.note;
+      const node = data?.note;
       return node
         ? {
             id,

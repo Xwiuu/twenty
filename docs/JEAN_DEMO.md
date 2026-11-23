@@ -55,7 +55,7 @@ node scripts/jean-crm-demo.mjs --clean            # dry-run: lista o que seria r
 node scripts/jean-crm-demo.mjs --clean --confirm  # remove
 ```
 
-Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os UUIDs existentes e com o nome/e-mail esperado; relações exatamente as da demo (nenhuma tarefa/nota extra ligada às oportunidades da demo); nenhuma duplicidade. Se faltar manifesto ou houver qualquer divergência, **não remove nada**. A exclusão é sempre por UUID do manifesto. Ao final, o workspace sai do manifesto.
+Antes de remover, o script verifica: manifesto do **mesmo workspace**; todos os UUIDs existentes e com o nome/e-mail esperado; relações exatamente as da demo (nenhuma tarefa/nota extra ligada às oportunidades da demo); nenhuma duplicidade. Se faltar manifesto, se algum UUID do manifesto não existir mais no CRM, ou houver qualquer outra divergência, **não remove nada** e o manifesto é preservado. (Se alguém apagou um mock à mão, rode a carga de novo para recriá-lo e depois a limpeza.) A exclusão é sempre por UUID do manifesto. Ao final, o workspace sai do manifesto.
 
 ## Conferir na interface (manual)
 

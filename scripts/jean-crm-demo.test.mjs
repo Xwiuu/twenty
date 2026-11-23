@@ -416,3 +416,60 @@ test('adoção é recusada quando as relações não são as da demo', async () 
   );
   assert.equal(store.saves, 0);
 });
+
+// UUID registrado no manifesto mas ausente no CRM: a limpeza deve bloquear, não ignorar.
+for (const [kind, mapName, label] of [
+  ['people', 'people', 'pessoa'],
+  ['opportunities', 'opportunities', 'oportunidade'],
+  ['tasks', 'tasks', 'tarefa'],
+  ['notes', 'notes', 'nota'],
+]) {
+  test(`UUID de ${label} ausente no CRM bloqueia a limpeza e preserva o manifesto`, async () => {
+    const crm = withPreexisting();
+    const store = memoryStore();
+    await loadDemo(crm, store);
+    const manifestBefore = structuredClone(store.manifest);
+    const missingId = Object.values(store.manifest.workspaces['ws-1'][kind])[0];
+    crm[mapName].delete(missingId);
+    const totalBefore = crm.total();
+
+    await assert.rejects(
+      cleanDemo(crm, store, { confirm: true }),
+      new RegExp(`${label} ${missingId} .*ausente no CRM`),
+    );
+    assert.equal(crm.destroyed.length, 0, 'zero exclusões');
+    assert.deepEqual(crm.total(), totalBefore);
+    assert.deepEqual(store.manifest, manifestBefore, 'manifesto preservado');
+    await assert.rejects(
+      cleanDemo(crm, store, { confirm: false }),
+      /ausente no CRM/,
+    );
+  });
+}
+
+test('recuperação: recarregar recria o UUID ausente e a limpeza válida volta a funcionar', async () => {
+  const crm = withPreexisting();
+  const store = memoryStore();
+  await loadDemo(crm, store);
+  const missingId = Object.values(store.manifest.workspaces['ws-1'].tasks)[0];
+  crm.tasks.delete(missingId);
+  crm.taskTargets = crm.taskTargets.filter(
+    (target) => target.taskId !== missingId,
+  );
+  await assert.rejects(
+    cleanDemo(crm, store, { confirm: true }),
+    /ausente no CRM/,
+  );
+
+  const created = await loadDemo(crm, store);
+  assert.deepEqual(created, {
+    people: 0,
+    opportunities: 0,
+    tasks: 1,
+    notes: 0,
+  });
+  const result = await cleanDemo(crm, store, { confirm: true });
+  assert.equal(result.removed, true);
+  assert.deepEqual(crm.total(), PRE_TOTAL);
+  assert.equal(store.manifest.workspaces['ws-1'], undefined);
+});
