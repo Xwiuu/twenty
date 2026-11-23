@@ -48,7 +48,7 @@ const INTEREST_FIELD = {
   ],
 };
 
-const request = async (path, query, variables, token) => {
+export const request = async (path, query, variables, token) => {
   const response = await fetch(`${API_URL}${path}`, {
     method: 'POST',
     headers: {
@@ -63,7 +63,7 @@ const request = async (path, query, variables, token) => {
   return body.data;
 };
 
-const getToken = async () => {
+export const getToken = async () => {
   if (process.env.TWENTY_API_KEY) return process.env.TWENTY_API_KEY;
   const { JEAN_CRM_EMAIL: email, JEAN_CRM_PASSWORD: password } = process.env;
   if (!email || !password) {
