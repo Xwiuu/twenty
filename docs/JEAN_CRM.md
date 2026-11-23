@@ -41,6 +41,7 @@ JEAN_CRM_EMAIL=<email> JEAN_CRM_PASSWORD=<senha> node scripts/jean-crm-setup.mjs
 - Variáveis opcionais: `TWENTY_API_URL` (padrão `http://localhost:3000`) e `TWENTY_ORIGIN` (padrão `http://localhost:3001`).
 - É idempotente: se já estiver configurado, não faz nada. Aborta, sem alterar, se `stage` não for exatamente o padrão do Twenty (5 etapas) nem o do Jean: etapas extras, ausentes ou duplicadas são rejeitadas.
 - Configura apenas o workspace do usuário informado.
+- Desde a Sprint 02 o mesmo script também aplica nome do workspace, navegação e views (veja `docs/JEAN_BRANDING.md`).
 - Nada de credenciais no código.
 
 ## Como usar

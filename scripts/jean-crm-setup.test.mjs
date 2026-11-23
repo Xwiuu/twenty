@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { planStageUpdate } from './jean-crm-setup.mjs';
+import { planNavigation, planStageUpdate } from './jean-crm-setup.mjs';
 
 const option = (value, position) => ({ id: `id-${value}`, value, position });
 
@@ -67,4 +67,75 @@ test('pipeline do Jean com etapa extra: aborta', () => {
     planStageUpdate([...jean, option('MINHA_ETAPA', 6)]).action,
     'abort',
   );
+});
+
+const objectNameById = {
+  o1: 'company',
+  o2: 'person',
+  o3: 'opportunity',
+  o4: 'task',
+  o5: 'note',
+  o6: 'workflow',
+  o7: 'dashboard',
+};
+const navItem = (id, objectId, position, extra = {}) => ({
+  id,
+  type: 'OBJECT',
+  position,
+  folderId: null,
+  userWorkspaceId: null,
+  targetObjectMetadataId: objectId,
+  ...extra,
+});
+const defaultNavigation = [
+  navItem('n-company', 'o1', 0),
+  navItem('n-person', 'o2', 1),
+  navItem('n-opportunity', 'o3', 2),
+  navItem('n-task', 'o4', 3),
+  navItem('n-note', 'o5', 4),
+  navItem('n-dashboard', 'o7', 5),
+  {
+    id: 'n-folder',
+    type: 'FOLDER',
+    position: 6,
+    folderId: null,
+    userWorkspaceId: null,
+  },
+  navItem('n-workflow', 'o6', 0, { folderId: 'n-folder' }),
+];
+
+test('navegação padrão: remove o que sobra (pasta por último) e reordena os 4 itens', () => {
+  const plan = planNavigation(defaultNavigation, objectNameById);
+  assert.deepEqual(
+    new Set(plan.remove),
+    new Set(['n-company', 'n-dashboard', 'n-folder', 'n-workflow']),
+  );
+  assert.ok(
+    plan.remove.indexOf('n-workflow') < plan.remove.indexOf('n-folder'),
+  );
+  assert.deepEqual(plan.moves, [
+    { id: 'n-person', position: 0 },
+    { id: 'n-opportunity', position: 1 },
+    { id: 'n-task', position: 2 },
+    { id: 'n-note', position: 3 },
+  ]);
+});
+
+test('navegação já simplificada: nada a fazer', () => {
+  const simplified = [
+    navItem('n-person', 'o2', 0),
+    navItem('n-opportunity', 'o3', 1),
+    navItem('n-task', 'o4', 2),
+    navItem('n-note', 'o5', 3),
+  ];
+  assert.deepEqual(planNavigation(simplified, objectNameById), {
+    remove: [],
+    moves: [],
+  });
+});
+
+test('navegação: itens pessoais de usuário não são tocados', () => {
+  const personal = navItem('n-mine', 'o1', 0, { userWorkspaceId: 'user-1' });
+  const plan = planNavigation([...defaultNavigation, personal], objectNameById);
+  assert.ok(!plan.remove.includes('n-mine'));
 });

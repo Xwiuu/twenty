@@ -5,6 +5,13 @@ import { pathToFileURL } from 'node:url';
 const API_URL = process.env.TWENTY_API_URL ?? 'http://localhost:3000';
 const ORIGIN = process.env.TWENTY_ORIGIN ?? 'http://localhost:3001';
 
+const WORKSPACE_NAME = 'Jean CRM';
+const NAVIGATION_ORDER = ['person', 'opportunity', 'task', 'note'];
+const INTEREST_VIEWS = [
+  { name: 'Imóveis', value: 'IMOVEIS', icon: 'IconHome' },
+  { name: 'Veículos', value: 'VEICULOS', icon: 'IconCar' },
+];
+
 const STAGES = [
   { value: 'NEW', label: 'Novo', color: 'red', legacyValue: 'NEW' },
   {
@@ -127,6 +134,31 @@ export const planStageUpdate = (options) => {
   return { action: 'update', options: migrated };
 };
 
+// Mantém só Pessoas, Oportunidades, Tarefas e Notas (nessa ordem) na navegação do workspace.
+// Só mexe em itens de workspace (userWorkspaceId nulo); objetos e dados não são afetados.
+export const planNavigation = (items, objectNameById) => {
+  const workspaceItems = items.filter((item) => !item.userWorkspaceId);
+  const kept = NAVIGATION_ORDER.map((name) =>
+    workspaceItems.find(
+      (item) =>
+        item.type === 'OBJECT' &&
+        !item.folderId &&
+        objectNameById[item.targetObjectMetadataId] === name,
+    ),
+  );
+  const keptIds = new Set(kept.filter(Boolean).map((item) => item.id));
+  // Itens dentro de pastas primeiro, para a pasta ser removida por último.
+  const remove = workspaceItems
+    .filter((item) => !keptIds.has(item.id))
+    .sort((a, b) => Number(Boolean(b.folderId)) - Number(Boolean(a.folderId)))
+    .map((item) => item.id);
+  const moves = kept
+    .map((item, position) => ({ item, position }))
+    .filter(({ item, position }) => item && item.position !== position)
+    .map(({ item, position }) => ({ id: item.id, position }));
+  return { remove, moves };
+};
+
 const main = async () => {
   const token = await getToken();
   const data = await request(
@@ -164,10 +196,11 @@ const main = async () => {
   const existingInterest = opportunity.fieldsList.find(
     (field) => field.name === INTEREST_FIELD.name,
   );
+  let interestFieldId = existingInterest?.id;
   if (existingInterest) {
     console.log('interesse: já existe, nada a fazer.');
   } else {
-    await request(
+    const created = await request(
       '/metadata',
       `mutation($input:CreateOneFieldMetadataInput!){createOneField(input:$input){id}}`,
       {
@@ -177,7 +210,135 @@ const main = async () => {
       },
       token,
     );
+    interestFieldId = created.createOneField.id;
     console.log('interesse: criado (Imóveis, Veículos).');
+  }
+
+  const meta = (query, variables) =>
+    request('/metadata', query, variables, token);
+
+  // Workspace: nome de exibição.
+  const { currentWorkspace } = await meta(`{currentWorkspace{displayName}}`);
+  if (currentWorkspace.displayName === WORKSPACE_NAME) {
+    console.log('workspace: já se chama Jean CRM.');
+  } else {
+    await meta(
+      `mutation($data:UpdateWorkspaceInput!){updateWorkspace(data:$data){id}}`,
+      { data: { displayName: WORKSPACE_NAME } },
+    );
+    console.log(`workspace: renomeado para ${WORKSPACE_NAME}.`);
+  }
+
+  // Navegação simplificada.
+  const objectNameById = Object.fromEntries(
+    data.objects.edges.map((edge) => [edge.node.id, edge.node.nameSingular]),
+  );
+  const { navigationMenuItems } = await meta(
+    `{navigationMenuItems{id type position folderId userWorkspaceId targetObjectMetadataId}}`,
+  );
+  const navigation = planNavigation(navigationMenuItems, objectNameById);
+  for (const id of navigation.remove) {
+    await meta(`mutation($id:UUID!){deleteNavigationMenuItem(id:$id){id}}`, {
+      id,
+    });
+  }
+  for (const move of navigation.moves) {
+    await meta(
+      `mutation($input:UpdateOneNavigationMenuItemInput!){updateNavigationMenuItem(input:$input){id}}`,
+      { input: { id: move.id, update: { position: move.position } } },
+    );
+  }
+  console.log(
+    `navegação: ${navigation.remove.length} itens removidos, ${navigation.moves.length} reordenados.`,
+  );
+
+  // Views: campo Interesse na tabela principal e views filtradas por interesse.
+  const { getViews: views } = await meta(
+    `query($id:String){getViews(objectMetadataId:$id){id name type key viewFields{fieldMetadataId position size isVisible} viewFilters{id}}}`,
+    { id: opportunity.id },
+  );
+  const indexView = views.find((view) => view.key === 'INDEX');
+  if (!indexView)
+    throw new Error('View principal de oportunidades não encontrada.');
+  const baseFields = indexView.viewFields.map((field) => ({
+    fieldMetadataId: field.fieldMetadataId,
+    position: field.position,
+    size: field.size,
+    isVisible: field.isVisible,
+  }));
+  const fieldsWithInterest = baseFields.some(
+    (field) => field.fieldMetadataId === interestFieldId,
+  )
+    ? baseFields
+    : [
+        ...baseFields,
+        {
+          fieldMetadataId: interestFieldId,
+          position: baseFields.length,
+          size: 150,
+          isVisible: true,
+        },
+      ];
+  if (fieldsWithInterest.length !== baseFields.length) {
+    await meta(
+      `mutation($input:CreateViewFieldInput!){createViewField(input:$input){id}}`,
+      {
+        input: {
+          viewId: indexView.id,
+          ...fieldsWithInterest[fieldsWithInterest.length - 1],
+        },
+      },
+    );
+    console.log('views: coluna Interesse adicionada à tabela principal.');
+  }
+
+  for (const [index, item] of INTEREST_VIEWS.entries()) {
+    let view = views.find((candidate) => candidate.name === item.name);
+    if (!view) {
+      const created = await meta(
+        `mutation($input:CreateViewInput!){createView(input:$input){id viewFilters{id}}}`,
+        {
+          input: {
+            name: item.name,
+            objectMetadataId: opportunity.id,
+            type: 'TABLE',
+            icon: item.icon,
+            position: 10 + index,
+            visibility: 'WORKSPACE',
+          },
+        },
+      );
+      view = { ...created.createView, viewFields: [] };
+      console.log(`views: "${item.name}" criada.`);
+    } else {
+      console.log(`views: "${item.name}" já existe.`);
+    }
+    if (view.viewFields.length === 0) {
+      await meta(
+        `mutation($inputs:[CreateViewFieldInput!]!){createManyViewFields(inputs:$inputs){id}}`,
+        {
+          inputs: fieldsWithInterest.map((field) => ({
+            ...field,
+            viewId: view.id,
+          })),
+        },
+      );
+      console.log(`views: colunas de "${item.name}" criadas.`);
+    }
+    if (view.viewFilters.length === 0) {
+      await meta(
+        `mutation($input:CreateViewFilterInput!){createViewFilter(input:$input){id}}`,
+        {
+          input: {
+            viewId: view.id,
+            fieldMetadataId: interestFieldId,
+            operand: 'IS',
+            value: JSON.stringify([item.value]),
+          },
+        },
+      );
+      console.log(`views: filtro de "${item.name}" aplicado.`);
+    }
   }
 };
 
