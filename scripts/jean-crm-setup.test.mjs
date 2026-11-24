@@ -224,6 +224,8 @@ test('main: validação do menu falha antes de qualquer mutação de navegação
       data = { currentWorkspace: { displayName: 'Jean CRM' } };
     } else if (query.includes('navigationMenuItems{')) {
       data = { navigationMenuItems: menu };
+    } else if (query.includes('dashboards(')) {
+      data = { dashboards: { edges: [] } };
     }
     return { json: async () => ({ data }) };
   };
@@ -341,4 +343,84 @@ test('colunas: já no layout desejado, nada a fazer (idempotente)', () => {
     updates: [],
     creates: [],
   });
+});
+
+const dashboardItem = (id, recordId, position, extra = {}) => ({
+  id,
+  type: 'RECORD',
+  position,
+  folderId: null,
+  userWorkspaceId: null,
+  targetObjectMetadataId: 'o-dashboard',
+  targetRecordId: recordId,
+  ...extra,
+});
+
+test('planNavigation: item do dashboard do Jean é protegido e fica em primeiro', () => {
+  const menu = [
+    dashboardItem('n-dash', 'dash-1', 0),
+    navItem('n-person', 'o2', 1),
+    navItem('n-company', 'o1', 2),
+    navItem('n-opportunity', 'o3', 3),
+    navItem('n-task', 'o4', 4),
+    navItem('n-note', 'o5', 5),
+  ];
+  assert.deepEqual(planNavigation(menu, objectNameById, ['dash-1']), {
+    remove: [],
+    moves: [],
+    create: [],
+  });
+});
+
+test('planNavigation: dashboard fora de ordem volta para a primeira posição', () => {
+  const menu = [
+    navItem('n-person', 'o2', 0),
+    navItem('n-company', 'o1', 1),
+    navItem('n-opportunity', 'o3', 2),
+    navItem('n-task', 'o4', 3),
+    navItem('n-note', 'o5', 4),
+    dashboardItem('n-dash', 'dash-1', 5),
+  ];
+  const plan = planNavigation(menu, objectNameById, ['dash-1']);
+  assert.deepEqual(plan.remove, []);
+  assert.deepEqual(
+    Object.fromEntries(plan.moves.map((move) => [move.id, move.position])),
+    {
+      'n-dash': 0,
+      'n-person': 1,
+      'n-company': 2,
+      'n-opportunity': 3,
+      'n-task': 4,
+      'n-note': 5,
+    },
+  );
+});
+
+test('planNavigation: sem o id do dashboard, item de registro continua sendo removido', () => {
+  const menu = [
+    dashboardItem('n-dash', 'dash-1', 0),
+    navItem('n-person', 'o2', 1),
+    navItem('n-company', 'o1', 2),
+    navItem('n-opportunity', 'o3', 3),
+    navItem('n-task', 'o4', 4),
+    navItem('n-note', 'o5', 5),
+  ];
+  assert.deepEqual(planNavigation(menu, objectNameById, ['outro']).remove, [
+    'n-dash',
+  ]);
+});
+
+test('planNavigation: dois itens para o mesmo dashboard abortam sem alterar', () => {
+  const menu = [
+    dashboardItem('n-dash', 'dash-1', 0),
+    dashboardItem('n-dash-2', 'dash-1', 1),
+    navItem('n-person', 'o2', 2),
+    navItem('n-company', 'o1', 3),
+    navItem('n-opportunity', 'o3', 4),
+    navItem('n-task', 'o4', 5),
+    navItem('n-note', 'o5', 6),
+  ];
+  const plan = planNavigation(menu, objectNameById, ['dash-1']);
+  assert.match(plan.abort, /2 itens apontam para o dashboard/);
+  assert.equal(plan.remove, undefined);
 });
