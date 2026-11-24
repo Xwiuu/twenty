@@ -1,0 +1,5 @@
+# HTTPS automático (Let's Encrypt) e redirecionamento de HTTP para HTTPS.
+{$JEAN_DOMAIN} {
+	encode gzip
+	reverse_proxy server:3000
+}
