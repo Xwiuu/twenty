@@ -1,0 +1,12 @@
+# HTTPS automático (Let's Encrypt) e redirecionamento de HTTP para HTTPS.
+# O certificado é obtido mesmo com a restrição de IP abaixo (o desafio ACME é tratado antes das rotas).
+{$JEAN_DOMAIN} {
+	encode gzip
+
+	# Só os IPs de JEAN_ALLOWED_IPS acessam. Ativação do primeiro administrador: só IPs autorizados;
+	# depois da confirmação: "0.0.0.0/0 ::/0" (todos).
+	@bloqueado not remote_ip {$JEAN_ALLOWED_IPS}
+	respond @bloqueado "Indisponível no momento." 403
+
+	reverse_proxy server:3000
+}
