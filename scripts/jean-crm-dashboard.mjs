@@ -69,25 +69,80 @@ export const buildWidgets = ({ opportunity, task }) => {
   ];
 };
 
-// Decide o que fazer com o estado atual, sem tocar na API.
-export const planDashboard = (existing, wantedTitles) => {
+// Parte comparável de um widget: identidade, tipo, objeto, agregação, campos e filtros.
+// Ignora o que é cosmético ou preenchido por padrão pelo Twenty (cor, rótulos, layout, fuso etc.).
+const normalizeFilter = (filter) =>
+  (filter?.recordFilters ?? [])
+    .map((item) => {
+      let value = item.value;
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) value = JSON.stringify([...parsed].sort());
+      } catch {
+        // valor que não é JSON é comparado como texto
+      }
+      return `${item.fieldMetadataId}|${item.operand}|${value}`;
+    })
+    .sort();
+
+export const widgetSignature = (widget) => {
+  const config = widget.configuration ?? {};
+  return {
+    title: widget.title,
+    type: widget.type,
+    objectMetadataId: widget.objectMetadataId ?? null,
+    configurationType: config.configurationType ?? null,
+    aggregateFieldMetadataId: config.aggregateFieldMetadataId ?? null,
+    aggregateOperation: config.aggregateOperation ?? null,
+    filter: normalizeFilter(config.filter),
+    groupByFieldMetadataId: config.primaryAxisGroupByFieldMetadataId ?? null,
+    secondaryGroupByFieldMetadataId:
+      config.secondaryAxisGroupByFieldMetadataId ?? null,
+  };
+};
+
+const diffSignature = (wanted, actual) =>
+  Object.keys(wanted).filter(
+    (key) => JSON.stringify(wanted[key]) !== JSON.stringify(actual[key]),
+  );
+
+// Decide o que fazer com o estado atual, sem tocar na API. Nunca altera um dashboard existente.
+export const planDashboard = (existing, wantedWidgets) => {
   if (existing.length === 0) return { action: 'create' };
+  const abort = (reason) => ({ action: 'abort', reason });
   if (existing.length > 1) {
-    return {
-      action: 'abort',
-      reason: `Há ${existing.length} dashboards chamados "${DASHBOARD_TITLE}". Abortando sem alterar.`,
-    };
+    return abort(
+      `Há ${existing.length} dashboards chamados "${DASHBOARD_TITLE}". Abortando sem alterar.`,
+    );
   }
-  const have = existing[0].widgetTitles;
-  const same =
-    have.length === wantedTitles.length &&
-    wantedTitles.every((title) => have.includes(title));
-  return same
+  const have = existing[0].widgets;
+  const problems = [];
+  for (const wanted of wantedWidgets) {
+    const matches = have.filter((widget) => widget.title === wanted.title);
+    if (matches.length === 0) problems.push(`"${wanted.title}" ausente`);
+    else if (matches.length > 1) {
+      problems.push(`"${wanted.title}" duplicado (${matches.length}x)`);
+    } else {
+      const differences = diffSignature(
+        widgetSignature(wanted),
+        widgetSignature(matches[0]),
+      );
+      if (differences.length > 0) {
+        problems.push(`"${wanted.title}" diverge em ${differences.join(', ')}`);
+      }
+    }
+  }
+  const wantedTitles = wantedWidgets.map((widget) => widget.title);
+  for (const widget of have) {
+    if (!wantedTitles.includes(widget.title)) {
+      problems.push(`widget inesperado "${widget.title}"`);
+    }
+  }
+  return problems.length === 0
     ? { action: 'skip', dashboard: existing[0] }
-    : {
-        action: 'abort',
-        reason: `O dashboard "${DASHBOARD_TITLE}" já existe com widgets diferentes (${have.join(', ') || 'nenhum'}). Abortando para não sobrescrever.`,
-      };
+    : abort(
+        `O dashboard "${DASHBOARD_TITLE}" já existe, mas não está como esperado: ${problems.join('; ')}. Abortando sem alterar.`,
+      );
 };
 
 // Item de menu (RECORD) do dashboard em primeiro lugar; os itens do workspace descem uma posição.
@@ -156,16 +211,18 @@ const findDashboards = async (token) => {
   for (const { node } of data.dashboards.edges) {
     const layout = await request(
       '/metadata',
-      `query($id:String!){ getPageLayout(id:$id){ tabs { id title widgets { id title } } } }`,
+      `query($id:String!){ getPageLayout(id:$id){ tabs { id title widgets { id title type objectMetadataId configuration {
+        __typename
+        ... on AggregateChartConfiguration { configurationType aggregateFieldMetadataId aggregateOperation filter }
+        ... on BarChartConfiguration { configurationType aggregateFieldMetadataId aggregateOperation primaryAxisGroupByFieldMetadataId secondaryAxisGroupByFieldMetadataId filter }
+      } } } } }`,
       { id: node.pageLayoutId },
       token,
     );
     result.push({
       ...node,
       tabs: layout.getPageLayout.tabs,
-      widgetTitles: layout.getPageLayout.tabs.flatMap((tab) =>
-        tab.widgets.map((widget) => widget.title),
-      ),
+      widgets: layout.getPageLayout.tabs.flatMap((tab) => tab.widgets),
     });
   }
   return result;
@@ -207,10 +264,7 @@ export const main = async () => {
   const token = await getToken();
   const ids = await loadFieldIds(token);
   const widgets = buildWidgets(ids);
-  const plan = planDashboard(
-    await findDashboards(token),
-    widgets.map((widget) => widget.title),
-  );
+  const plan = planDashboard(await findDashboards(token), widgets);
   if (plan.action === 'abort') throw new Error(plan.reason);
   let dashboardId;
   if (plan.action === 'skip') {
