@@ -84,6 +84,8 @@ services:
       - "443:443"
     environment:
       JEAN_DOMAIN: ${JEAN_DOMAIN:?defina JEAN_DOMAIN}
+      # Obrigatório (falha fechada): só estes IPs acessam o CRM. Liberar a todos = "0.0.0.0/0 ::/0".
+      JEAN_ALLOWED_IPS: ${JEAN_ALLOWED_IPS:?defina JEAN_ALLOWED_IPS (ver docs/JEAN_PRODUCTION.md)}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
