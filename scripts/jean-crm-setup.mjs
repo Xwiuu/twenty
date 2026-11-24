@@ -6,6 +6,7 @@ const API_URL = process.env.TWENTY_API_URL ?? 'http://localhost:3000';
 const ORIGIN = process.env.TWENTY_ORIGIN ?? 'http://localhost:3001';
 
 const WORKSPACE_NAME = 'Jean CRM';
+export const DASHBOARD_TITLE = 'Visão Geral — Jean CRM';
 const NAVIGATION_ORDER = ['person', 'company', 'opportunity', 'task', 'note'];
 const INTEREST_VIEWS = [
   { name: 'Imóveis', value: 'IMOVEIS', icon: 'IconHome' },
@@ -157,8 +158,26 @@ export const planStageUpdate = (options) => {
 
 // Mantém só Pessoas, Empresas, Oportunidades, Tarefas e Notas (nessa ordem) na navegação do workspace.
 // Só mexe em itens de workspace (userWorkspaceId nulo); objetos e dados não são afetados.
-export const planNavigation = (items, objectNameById) => {
+// `dashboardRecordIds`: ids dos registros do dashboard do Jean. O item de menu (RECORD) que aponta
+// para eles é protegido: não é removido e fica sempre em primeiro (os demais deslocam 1 posição).
+export const planNavigation = (
+  items,
+  objectNameById,
+  dashboardRecordIds = [],
+) => {
   const workspaceItems = items.filter((item) => !item.userWorkspaceId);
+  const dashboardItems = workspaceItems.filter(
+    (item) =>
+      item.type === 'RECORD' &&
+      !item.folderId &&
+      dashboardRecordIds.includes(item.targetRecordId),
+  );
+  if (dashboardItems.length > 1) {
+    return {
+      abort: `navegação: ${dashboardItems.length} itens apontam para o dashboard. Abortando sem alterar o menu.`,
+    };
+  }
+  const offset = dashboardItems.length;
   // Cada item obrigatório precisa existir exatamente uma vez, no nível do workspace,
   // como OBJECT e fora de pasta. Senão aborta antes de planejar qualquer remoção.
   const invalid = [];
@@ -176,7 +195,7 @@ export const planNavigation = (items, objectNameById) => {
       (item) => objectNameById[item.targetObjectMetadataId] === name,
     );
     if (name === 'company' && anyTarget.length === 0) {
-      create.push({ name, position });
+      create.push({ name, position: position + offset });
       return undefined;
     }
     if (valid.length !== 1)
@@ -188,14 +207,16 @@ export const planNavigation = (items, objectNameById) => {
       abort: `navegação: itens obrigatórios ausentes ou duplicados: ${invalid.join(', ')}. Abortando sem alterar o menu.`,
     };
   }
-  const keptIds = new Set(kept.filter(Boolean).map((item) => item.id));
+  const keptIds = new Set(
+    [...kept, ...dashboardItems].filter(Boolean).map((item) => item.id),
+  );
   // Itens dentro de pastas primeiro, para a pasta ser removida por último.
   const remove = workspaceItems
     .filter((item) => !keptIds.has(item.id))
     .sort((a, b) => Number(Boolean(b.folderId)) - Number(Boolean(a.folderId)))
     .map((item) => item.id);
-  const moves = kept
-    .map((item, position) => ({ item, position }))
+  const moves = [...dashboardItems, ...kept]
+    .map((item, index) => ({ item, position: index }))
     .filter(({ item, position }) => item && item.position !== position)
     .map(({ item, position }) => ({ id: item.id, position }));
   return { remove, moves, create };
@@ -306,9 +327,20 @@ export const main = async () => {
     data.objects.edges.map((edge) => [edge.node.id, edge.node.nameSingular]),
   );
   const { navigationMenuItems } = await meta(
-    `{navigationMenuItems{id type position folderId userWorkspaceId targetObjectMetadataId}}`,
+    `{navigationMenuItems{id type position folderId userWorkspaceId targetObjectMetadataId targetRecordId}}`,
   );
-  const navigation = planNavigation(navigationMenuItems, objectNameById);
+  // Dashboard do Jean (se já existir) é preservado e fica em primeiro no menu.
+  const dashboards = await request(
+    '/graphql',
+    `query($title:String!){dashboards(filter:{title:{eq:$title}}){edges{node{id}}}}`,
+    { title: DASHBOARD_TITLE },
+    token,
+  );
+  const navigation = planNavigation(
+    navigationMenuItems,
+    objectNameById,
+    dashboards.dashboards.edges.map((edge) => edge.node.id),
+  );
   if (navigation.abort) throw new Error(navigation.abort);
   for (const id of navigation.remove) {
     await meta(`mutation($id:UUID!){deleteNavigationMenuItem(id:$id){id}}`, {
