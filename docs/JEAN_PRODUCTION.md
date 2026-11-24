@@ -143,12 +143,12 @@ Agendamento (cron do root): `17 3 * * * /caminho/do/repo/scripts/jean-crm-backup
 
 Corrige o procedimento anterior, que tentava `docker compose exec server` com o servidor parado (não funciona). Agora:
 
-1. **valida** os dois arquivos antes de parar qualquer coisa (se algo estiver corrompido, aborta e a aplicação continua no ar);
+1. **valida** os dois arquivos antes de parar qualquer coisa: dump legível por `pg_restore --list`; `.tar.gz` íntegro (`gzip -t`), com `tar tzf` sem erro, **marcador de fim de TAR presente** (o `tar` retorna sucesso até para TAR truncado ou lixo dentro de um gzip válido, então o código de saída não basta), `.local-storage/` presente e extração completa em diretório temporário para calcular o SHA-256 de cada arquivo. Se algo falhar, aborta e a aplicação continua no ar;
 2. para `caddy`, `worker` e `server` (o `db` fica de pé);
 3. restaura o banco em um banco **novo** (`default_restore_<data>`); só se der certo e houver workspace nele, troca os nomes: o banco atual vira `default_old_<data>` (**não é apagado**);
 4. restaura os anexos com um **contêiner temporário** que monta o volume (o servidor está parado): o conteúdo atual vai para `.local-storage/.pre-restore-<data>` (**não é apagado**) e o `.tar.gz` é extraído em seguida, preservando caminhos e permissões;
 5. sobe tudo com `docker compose up -d --wait` (espera os healthchecks);
-6. valida: serviços saudáveis, workspaces no banco e **lista de arquivos do volume idêntica à do backup**.
+6. valida: serviços saudáveis, workspaces no banco e **SHA-256 de cada arquivo do volume idêntico ao do backup** (detecta conteúdo diferente com mesmo nome e tamanho, o que a comparação só por nomes não detectava).
 
 Nenhum volume é removido. Depois de conferir o CRM, o operador remove manualmente o banco antigo e a pasta `.pre-restore-*` (comandos impressos no final). Enquanto existir, a pasta `.pre-restore-*` entra nos backups seguintes.
 
@@ -164,7 +164,9 @@ Os scripts reais foram executados contra um stack de teste com os **mesmos nomes
 | Restauração sem `--yes` | exit 2, nada alterado |
 | Restauração com dump truncado | `ERRO: dump ilegível`, exit ≠ 0, **serviços continuam rodando**, dados inalterados |
 | Restauração com `.tar.gz` corrompido | `ERRO: .tar.gz corrompido`, exit ≠ 0, serviços continuam rodando |
-| Restauração real (após apagar o workspace, apagar uma nota, corromper um arquivo, apagar outro e criar um novo) | exit 0; workspace e notas de volta; arquivos de volta com o conteúdo original e permissão 640; o arquivo criado depois do backup ficou em `.pre-restore-*`; banco anterior preservado como `default_old_*`; 4 serviços rodando |
+| Restauração com gzip válido contendo: texto que não é TAR; TAR sem `.local-storage`; TAR com lixo/truncado; TAR truncado no meio de um arquivo; TAR truncado em fronteira de bloco | os 5 recusados (`TAR truncado ou inválido` ou `.local-storage ausente`), exit 1; **serviços rodando, nenhum banco novo, nenhum `.pre-restore`**. Observação: antes da correção o caso "truncado no meio de um arquivo" passava e restaurava |
+| Divergência de conteúdo | arquivo trocado por outro de **mesmo nome e tamanho**: os SHA-256 divergem (a comparação só por nomes diria "igual") |
+| Restauração real (após apagar o workspace, apagar uma nota, corromper um arquivo, apagar outro e criar um novo), repetida após o hotfix do TAR | exit 0; 3 arquivos com SHA-256 idêntico; workspace e notas de volta; arquivos de volta com o conteúdo original e permissão 640; o arquivo criado depois do backup ficou em `.pre-restore-*`; banco anterior preservado como `default_old_*`; 4 serviços rodando |
 
 ### O que NÃO foi executado
 

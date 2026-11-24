@@ -30,6 +30,9 @@ docker compose run --rm --no-deps -T --entrypoint tar server czf - -C "$FILES_RO
 [ -s "$files_tmp" ] || { echo "ERRO: arquivo de anexos vazio." >&2; exit 1; }
 gzip -t "$files_tmp" || { echo "ERRO: .tar.gz corrompido." >&2; exit 1; }
 listing="$(tar tzf "$files_tmp")" || { echo "ERRO: .tar.gz ilegível." >&2; exit 1; }
+# O tar daqui retorna sucesso até para TAR truncado; um TAR completo termina com blocos zerados.
+[ "$(gzip -dc "$files_tmp" | tail -c 1024 | tr -d '\0' | wc -c)" -eq 0 ] ||
+  { echo "ERRO: .tar.gz truncado (sem marcador de fim)." >&2; exit 1; }
 grep -q '^\(\./\)\?\.local-storage/\?$' <<<"$listing" ||
   { echo "ERRO: .local-storage ausente no .tar.gz." >&2; exit 1; }
 
