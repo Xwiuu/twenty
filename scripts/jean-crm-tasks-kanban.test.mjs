@@ -55,6 +55,11 @@ const group = (fieldValue, position, isVisible = true) => ({
   position,
   isVisible,
 });
+const cardField = (fieldMetadataId, isVisible = true) => ({
+  fieldMetadataId,
+  isVisible,
+});
+const cardIds = { title: 'f-title', dueAt: 'f-due', assignee: 'f-assignee' };
 const goodView = (extra = {}) => ({
   id: 'v1',
   name: KANBAN_NAME,
@@ -66,35 +71,53 @@ const goodView = (extra = {}) => ({
     group('DONE', 2),
     group('', 3),
   ],
+  viewFields: [
+    cardField('f-title'),
+    cardField('f-due'),
+    cardField('f-assignee'),
+  ],
   ...extra,
 });
 const other = { id: 'v0', name: 'All Tasks', type: 'TABLE', viewGroups: [] };
 
 test('planKanbanView: cria quando não existe, preservando a lista', () => {
-  assert.deepEqual(planKanbanView([other], 'f-status'), { action: 'create' });
+  assert.deepEqual(planKanbanView([other], 'f-status', cardIds), {
+    action: 'create',
+  });
 });
 
 test('planKanbanView: view correta (com coluna nativa "sem valor") é ignorada', () => {
-  assert.equal(planKanbanView([other, goodView()], 'f-status').action, 'skip');
+  assert.equal(
+    planKanbanView([other, goodView()], 'f-status', cardIds).action,
+    'skip',
+  );
 });
 
 test('planKanbanView: não duplica em segunda execução', () => {
   assert.notEqual(
-    planKanbanView([other, goodView()], 'f-status').action,
+    planKanbanView([other, goodView()], 'f-status', cardIds).action,
     'create',
   );
 });
 
 test('planKanbanView: duas views com o mesmo nome abortam', () => {
-  const plan = planKanbanView([goodView(), goodView({ id: 'v2' })], 'f-status');
+  const plan = planKanbanView(
+    [goodView(), goodView({ id: 'v2' })],
+    'f-status',
+    cardIds,
+  );
   assert.equal(plan.action, 'abort');
   assert.match(plan.reason, /2 views/);
 });
 
 test('planKanbanView: tipo, agrupamento ou colunas divergentes abortam', () => {
-  const wrongType = planKanbanView([goodView({ type: 'TABLE' })], 'f-status');
+  const wrongType = planKanbanView(
+    [goodView({ type: 'TABLE' })],
+    'f-status',
+    cardIds,
+  );
   assert.match(wrongType.reason, /KANBAN/);
-  const wrongField = planKanbanView([goodView()], 'outro-campo');
+  const wrongField = planKanbanView([goodView()], 'outro-campo', cardIds);
   assert.match(wrongField.reason, /não agrupa por status/);
   const duplicated = planKanbanView(
     [goodView({ viewGroups: [...goodView().viewGroups, group('TODO', 4)] })],
@@ -114,4 +137,72 @@ test('planKanbanView: tipo, agrupamento ou colunas divergentes abortam', () => {
     'f-status',
   );
   assert.equal(hidden.action, 'abort');
+});
+
+test('planKanbanView: campo do cartão ausente aborta (view criada pela metade)', () => {
+  const plan = planKanbanView(
+    [goodView({ viewFields: [cardField('f-title'), cardField('f-due')] })],
+    'f-status',
+    cardIds,
+  );
+  assert.equal(plan.action, 'abort');
+  assert.match(plan.reason, /campo assignee ausente/);
+});
+
+test('planKanbanView: view sem nenhum campo de cartão aborta', () => {
+  const plan = planKanbanView(
+    [goodView({ viewFields: [] })],
+    'f-status',
+    cardIds,
+  );
+  assert.equal(plan.action, 'abort');
+  assert.match(plan.reason, /title ausente.*dueAt ausente.*assignee ausente/);
+});
+
+test('planKanbanView: campo do cartão oculto aborta', () => {
+  const plan = planKanbanView(
+    [
+      goodView({
+        viewFields: [
+          cardField('f-title'),
+          cardField('f-due', false),
+          cardField('f-assignee'),
+        ],
+      }),
+    ],
+    'f-status',
+    cardIds,
+  );
+  assert.match(plan.reason, /campo dueAt oculto/);
+});
+
+test('planKanbanView: campo do cartão duplicado aborta', () => {
+  const plan = planKanbanView(
+    [
+      goodView({
+        viewFields: [
+          cardField('f-title'),
+          cardField('f-title'),
+          cardField('f-due'),
+          cardField('f-assignee'),
+        ],
+      }),
+    ],
+    'f-status',
+    cardIds,
+  );
+  assert.match(plan.reason, /campo title duplicado/);
+});
+
+test('planKanbanView: campos extras (outras colunas do cartão) não impedem o skip', () => {
+  const plan = planKanbanView(
+    [
+      goodView({
+        viewFields: [...goodView().viewFields, cardField('f-other')],
+      }),
+    ],
+    'f-status',
+    cardIds,
+  );
+  assert.equal(plan.action, 'skip');
 });

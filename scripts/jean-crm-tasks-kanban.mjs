@@ -37,7 +37,7 @@ export const planStatusLabels = (options) => {
 };
 
 // Decide o que fazer com as views da Task, sem tocar na API. Nunca altera uma view existente.
-export const planKanbanView = (views, statusFieldId) => {
+export const planKanbanView = (views, statusFieldId, cardFieldIds = {}) => {
   const abort = (reason) => ({ action: 'abort', reason });
   const matches = views.filter((view) => view.name === KANBAN_NAME);
   if (matches.length === 0) return { action: 'create' };
@@ -59,6 +59,18 @@ export const planKanbanView = (views, statusFieldId) => {
   }
   if (JSON.stringify(groups) !== JSON.stringify(wantedGroups)) {
     problems.push(`colunas diferentes (${groups.join(', ') || 'nenhuma'})`);
+  }
+  // Campos do cartão: cada um presente uma única vez e visível.
+  for (const [name, fieldId] of Object.entries(cardFieldIds)) {
+    const entries = (view.viewFields ?? []).filter(
+      (viewField) => viewField.fieldMetadataId === fieldId,
+    );
+    if (entries.length === 0) problems.push(`campo ${name} ausente no cartão`);
+    else if (entries.length > 1) {
+      problems.push(`campo ${name} duplicado no cartão`);
+    } else if (!entries[0].isVisible) {
+      problems.push(`campo ${name} oculto no cartão`);
+    }
   }
   return problems.length === 0
     ? { action: 'skip', view }
@@ -104,10 +116,14 @@ export const main = async () => {
   if (labels.action === 'abort') throw new Error(labels.reason);
 
   const { getViews: views } = await meta(
-    `query($id:String){getViews(objectMetadataId:$id){id name type mainGroupByFieldMetadataId viewGroups{fieldValue isVisible position}}}`,
+    `query($id:String){getViews(objectMetadataId:$id){id name type mainGroupByFieldMetadataId viewGroups{fieldValue isVisible position} viewFields{fieldMetadataId isVisible}}}`,
     { id: task.objectId },
   );
-  const view = planKanbanView(views, status.id);
+  const view = planKanbanView(
+    views,
+    status.id,
+    Object.fromEntries(CARD_FIELDS.map((name) => [name, task.fields[name].id])),
+  );
   if (view.action === 'abort') throw new Error(view.reason);
 
   // Nada é alterado antes de as duas validações passarem.
